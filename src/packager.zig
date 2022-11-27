@@ -5,48 +5,65 @@ const c = @cImport({
     @cInclude("stdio.h");
 });
 
-pub fn main() !void {
+pub fn main() !void
+{
+    // Allocate a scratch and patterns buffer.
     var ScratchBuffer: [1024]u8 = undefined;
     var PatternsBuffer: [1024]u8 = undefined;
     var ScratchFBA = std.heap.FixedBufferAllocator.init(&ScratchBuffer);
-    var PatternsFBA = std.heap.FixedBufferAllocator.init(&PatternsBuffer);
+    var HSFBA = std.heap.FixedBufferAllocator.init(&PatternsBuffer);
 
-    var ArgsIterator = try std.process.argsWithAllocator(ScratchFBA.allocator());
-    if (!ArgsIterator.skip()) {
-        return;
+    var PatternsFile: std.fs.File = undefined;
+    {
+        defer ScratchFBA.reset();
+
+        // Read patterns path
+        var ArgsIterator = try std.process.argsWithAllocator(ScratchFBA.allocator());
+        defer ArgsIterator.deinit();
+        if (!ArgsIterator.skip()) {
+            unreachable;
+        }
+        const PatternsPathZ = ArgsIterator.next();
+
+        // Open file
+        PatternsFile = try std.fs.cwd().openFile(PatternsPathZ.?, .{});
     }
-    const PatternsPathZ = ArgsIterator.next();
-    const File = try std.fs.cwd().openFile(PatternsPathZ.?, .{});
-    ArgsIterator.deinit();
-    ScratchFBA.reset();
 
+    // Get pattern count
     var nPatterns: usize = 0;
-    while (true) {
-        const Byte = File.reader().readByte() catch {
-            break; // Handle EOF == nPatterns + 1???
-        };
-        if (Byte == '\n') {
-            nPatterns += 1;
+    {
+        const Reader = PatternsFile.reader();
+        while (true)
+        {
+            const Byte = Reader.readByte() catch {
+                break; // NOTE(cjb): Possibility of missing last pattern here..
+            };
+            if (Byte == '\n')
+            {
+                nPatterns += 1;
+            }
         }
     }
 
-    var PatternsZ = try PatternsFBA.allocator().alloc([*:0]u8, nPatterns);
-    var Flags = try PatternsFBA.allocator().alloc(c_uint, nPatterns);
-    var IDs = try PatternsFBA.allocator().alloc(c_uint, nPatterns);
+    // Allocate Pattern, Flag, and ID buffer(s)
+    var PatternsZ = try HSFBA.allocator().alloc([*:0]u8, nPatterns);
+    var Flags = try HSFBA.allocator().alloc(c_uint, nPatterns);
+    var IDs = try HSFBA.allocator().alloc(c_uint, nPatterns);
 
-    try File.seekTo(0);
+    try PatternsFile.seekTo(0);
     var PatternIndex: c_uint = 0;
-    const FileStat = try File.stat();
+    const FileStat = try PatternsFile.stat();
     const MaxRead = FileStat.size;
-    var Data = try File.reader().readUntilDelimiterOrEofAlloc(ScratchFBA.allocator(), '\n', MaxRead);
-    while (Data != null) : (Data = try File.reader().readUntilDelimiterOrEofAlloc(ScratchFBA.allocator(), '\n', MaxRead)) {
-        var PatternBuf: []u8 = try PatternsFBA.allocator().alloc(u8, Data.?.len + 1);
+    var Data = try PatternsFile.reader().readUntilDelimiterOrEofAlloc(ScratchFBA.allocator(), '\n', MaxRead);
+    while (Data != null) : (PatternIndex += 1) {
+        var PatternBuf: []u8 = try HSFBA.allocator().alloc(u8, Data.?.len + 1);
         std.mem.copy(u8, PatternBuf, Data.?);
         PatternBuf[Data.?.len] = 0;
         PatternsZ[PatternIndex] = PatternBuf[0..Data.?.len :0];
         Flags[PatternIndex] = c.HS_FLAG_DOTALL;
         IDs[PatternIndex] = PatternIndex;
-        PatternIndex += 1;
+
+        Data = try PatternsFile.reader().readUntilDelimiterOrEofAlloc(ScratchFBA.allocator(), '\n', MaxRead);
     }
 
     std.debug.print("Serializing Patterns: \n---------------------\n", .{});
@@ -59,13 +76,18 @@ pub fn main() !void {
     if (c.hs_compile_multi(PatternsZ.ptr, Flags.ptr, IDs.ptr, PatternIndex, c.HS_MODE_BLOCK, null, &Database, &CompileError) != c.HS_SUCCESS) {
         std.debug.print("{s}\n", .{CompileError.?.message});
         _ = c.hs_free_compile_error(CompileError);
-        return;
+        unreachable;
     }
 
     var Bytes: [*c]u8 = undefined;
     var Length: usize = undefined;
-    _ = c.hs_serialize_database(Database, &Bytes, &Length);
+    if (c.hs_serialize_database(Database, &Bytes, &Length) != c.HS_SUCCESS) {
+        unreachable;
+    }
 
     const DatabaseFile = try std.fs.cwd().createFile("data/db.bin", .{});
-    _ = try DatabaseFile.write(Bytes[0..Length]);
+    const BytesWritten = try DatabaseFile.write(Bytes[0..Length]);
+    if (BytesWritten != Length) {
+        unreachable;
+    }
 }
