@@ -20,8 +20,6 @@ int main()
     char Text[] = "a quick brown foo";
     job_posting_classifier JPC = {};
 
-    JPCInit
-
     if (JPCInit(&JPC, "./data/db.bin") == JPC_SUCCESS)
     {
         JPCExtract(&JPC,Text, sizeof(Text));
