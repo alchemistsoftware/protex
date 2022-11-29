@@ -36,88 +36,82 @@ fn HSSuccessOrErr(Writer: std.fs.File.Writer, HSReturnCode: c_int) !void {
     return error.Error;
 }
 
-export fn JPCInitialize(JPC: *job_posting_classifier, ArtifactPathZ: [*c]const u8) callconv(.C) c_int
-{
-    const StdErr = std.io.getStdErr();
-    defer StdErr.close();
+export fn JPCInit(JPC: ?*job_posting_classifier, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int {
+    const Writer = std.io.getStdErr().writer();
 
     var AA = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer AA.deinit();
 
     var Bytes: []u8 = undefined;
     defer AA.allocator().free(Bytes);
-    {
-        var PathLen: usize = 0;
-        while (ArtifactPathZ[PathLen] != 0) {
-            PathLen += 1;
+    var PathLen: usize = 0;
+    while (ArtifactPathZ.?[PathLen] != 0) {
+        PathLen += 1;
+    }
+
+    const ArtifactFile = std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{}) catch |Err| {
+        switch (Err) {
+            error.FileNotFound => return JPC_INVALID,
+            else => {
+                Writer.print("{}\n", .{Err}) catch unreachable;
+                return JPC_UNKNOWN_ERROR;
+            },
         }
+    };
 
-        const ArtifactFile = std.fs.cwd().openFile(ArtifactPathZ[0..PathLen], .{}) catch |Err| {
-            switch (Err) {
-                error.FileNotFound => return JPC_INVALID,
-                else => {
-                    StdErr.writer().print("{}\n", .{Err}) catch unreachable;
-                    return JPC_UNKNOWN_ERROR;
-                },
-            }
-        };
+    const FileStat = ArtifactFile.stat() catch |Err| {
+        Writer.print("{}\n", .{Err}) catch unreachable;
+        return JPC_UNKNOWN_ERROR;
+    };
 
-        const FileStat = ArtifactFile.stat() catch |Err| {
-            StdErr.writer().print("{}\n", .{Err}) catch unreachable;
-            return JPC_UNKNOWN_ERROR;
-        };
+    const FSize = FileStat.size;
+    Bytes = ArtifactFile.reader().readAllAlloc(AA.allocator(), FSize) catch |Err| {
+        Writer.print("{}\n", .{Err}) catch unreachable;
+        return JPC_UNKNOWN_ERROR;
+    };
 
-        const FSize = FileStat.size;
-        Bytes = ArtifactFile.reader().readAllAlloc(AA.allocator(), FSize) catch |Err| {
-            StdErr.writer().print("{}\n", .{Err}) catch unreachable;
-            return JPC_UNKNOWN_ERROR;
-        };
+    // TODO(cjb): set allocator... also allocates space for database
+    JPC.?.Database = null;
+    HSSuccessOrErr(Writer, c.hs_deserialize_database(Bytes.ptr, Bytes.len, &JPC.?.Database)) catch return JPC_UNKNOWN_ERROR;
 
-        // TODO(cjb): set allocator... also allocates space for database
-        JPC.Database = null;
-        HSSuccessOrErr(StdErr.writer(),
-            c.hs_deserialize_database(Bytes.ptr, Bytes.len, &JPC.Database))
-            catch return JPC_UNKNOWN_ERROR;
+    JPC.?.Scratch = null;
+    HSSuccessOrErr(Writer, c.hs_alloc_scratch(JPC.?.Database, &JPC.?.Scratch)) catch {
+        _ = c.hs_free_database(JPC.?.Database);
+        return JPC_UNKNOWN_ERROR;
+    };
 
-        JPC.Scratch = null;
-        HSSuccessOrErr(StdErr.writer(),
-            c.hs_alloc_scratch(JPC.Database, &JPC.Scratch)) catch
-        {
-            _ = c.hs_free_database(JPC.Database);
-            return JPC_UNKNOWN_ERROR;
-        };
+    return JPC_SUCCESS;
+}
+
+fn EventHandler(id: c_uint, from: c_ulonglong, to: c_ulonglong, flags: c_uint, Ctx: ?*anyopaque) callconv(.C) c_int {
+    _ = id;
+    _ = flags;
+
+    const Writer = std.io.getStdErr().writer();
+    const TextPtr = @ptrCast(?[*]u8, Ctx);
+    Writer.print("Match: '{s}' (from: {d}, to: {d})\n", .{ TextPtr.?[from..to], from, to }) catch {};
+    return 0;
+}
+
+export fn JPCExtract(JPC: ?*job_posting_classifier, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C) c_int {
+    _ = JPC;
+
+    const Writer = std.io.getStdErr().writer();
+    _ = Writer;
+
+    if (c.hs_scan(JPC.?.Database, Text, nTextBytes, 0, JPC.?.Scratch, EventHandler, Text) != c.HS_SUCCESS) {
+        Writer.print("Unable to scan input buffer.\n", .{}) catch {};
+        return JPC_UNKNOWN_ERROR;
     }
 
     return JPC_SUCCESS;
 }
 
-fn EventHandler(id: c_uint, from: c_ulonglong, to: c_ulonglong, flags: c_uint, ctx: ?*anyopaque) callconv(.C) c_int {
-    _ = id;
-    _ = flags;
-    _ = ctx;
-    _ = c.printf("Match (from: %llu, to: %llu)\n", from, to);
-    return 0;
-}
+export fn JPCDeinit(JPC: ?*job_posting_classifier) c_int {
+    _ = c.hs_free_scratch(JPC.?.Scratch);
+    _ = c.hs_free_database(JPC.?.Database);
 
-export fn JPCExtract(JPC: *job_posting_classifier, Text: [*c]u8, nTextBytes: c_uint) callconv(.C) c_int {
-    _ = JPC;
-
-    const StdErr = std.io.getStdErr();
-    defer StdErr.close();
-    StdErr.writer().print("Text: {s}\n", .{Text[0..nTextBytes]}) catch unreachable;
-
-    //_ = c.printf("Scanning %u bytes with Hyperscan\n", nTextBytes);
-    //if (c.hs_scan(Database, Text, nTextBytes, 0, Scratch, EventHandler, Text) != c.HS_SUCCESS) {
-    //    _ = c.fprintf(c.stderr, "ERROR: Unable to scan input buffer. Exiting.\n");
-    //    _ = c.hs_free_scratch(Scratch);
-    //    _ = c.hs_free_database(Database);
-    //    return -1;
-    //}
-
-    //_ = c.hs_free_scratch(Scratch);
-    //_ = c.hs_free_database(Database);
-
-    return 100;
+    return JPC_SUCCESS;
 }
 
 test "Check hs is working" {}

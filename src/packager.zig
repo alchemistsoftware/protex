@@ -56,7 +56,7 @@ pub fn main() !void {
         std.mem.copy(u8, PatternBuf, Data.?);
         PatternBuf[Data.?.len] = 0;
         PatternsZ[PatternIndex] = PatternBuf.ptr;
-        Flags[PatternIndex] = c.HS_FLAG_DOTALL;
+        Flags[PatternIndex] = c.HS_FLAG_DOTALL | c.HS_FLAG_CASELESS | c.HS_FLAG_SOM_LEFTMOST;
         IDs[PatternIndex] = PatternIndex;
 
         Data = try PatternsFile.reader().readUntilDelimiterOrEofAlloc(ScratchFBA.allocator(), '\n', MaxRead);
