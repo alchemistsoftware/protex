@@ -8,14 +8,14 @@ pub fn build(B: *std.build.Builder) void {
     const Lib = B.addSharedLibrary("jpc", "src/jpc.zig", B.version(0, 0, 1));
     Lib.setOutputDir("./lib");
     Lib.setBuildMode(Mode);
-    Lib.addIncludePath("/usr/local/include/hs/");
+    Lib.addIncludeDir("/usr/include/hs/");
     Lib.linkSystemLibrary("hs_runtime"); // TODO(cjb): runtime
     Lib.linkLibC();
     Lib.install();
 
     const LibTests = B.addTest("src/jpc.zig");
-    LibTests.linkSystemLibrary("libhs"); // TODO(cjb): runtime
-    LibTests.addIncludePath("/usr/local/include/hs/");
+    LibTests.linkSystemLibrary("hs_runtime"); // TODO(cjb): runtime
+    LibTests.addIncludeDir("/usr/include/hs/");
     LibTests.linkLibC();
     LibTests.setBuildMode(Mode);
 
@@ -25,8 +25,8 @@ pub fn build(B: *std.build.Builder) void {
     const Packager = B.addExecutable("packager", "src/packager.zig");
     Packager.setOutputDir("./bin");
     Packager.setBuildMode(Mode);
-    Packager.linkSystemLibrary("libhs");
-    Packager.addIncludePath("/usr/local/include/hs/");
+    Packager.linkSystemLibrary("hs");
+    Packager.addIncludeDir("/usr/include/hs/");
     Packager.linkLibC();
     Packager.install();
 }

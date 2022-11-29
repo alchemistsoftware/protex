@@ -5,48 +5,44 @@ const c = @cImport({
     @cInclude("stdio.h");
 });
 
-pub fn main() !void
-{
+pub fn main() !void {
     // Allocate a scratch and patterns buffer.
     var ScratchBuffer: [1024]u8 = undefined;
     var PatternsBuffer: [1024]u8 = undefined;
     var ScratchFBA = std.heap.FixedBufferAllocator.init(&ScratchBuffer);
     var HSFBA = std.heap.FixedBufferAllocator.init(&PatternsBuffer);
+    defer HSFBA.reset();
 
     var PatternsFile: std.fs.File = undefined;
-    {
-        defer ScratchFBA.reset();
+    defer ScratchFBA.reset();
 
-        // Read patterns path
-        var ArgsIterator = try std.process.argsWithAllocator(ScratchFBA.allocator());
-        defer ArgsIterator.deinit();
-        if (!ArgsIterator.skip()) {
-            unreachable;
-        }
-        const PatternsPathZ = ArgsIterator.next();
-
-        // Open file
-        PatternsFile = try std.fs.cwd().openFile(PatternsPathZ.?, .{});
+    // Read patterns path
+    var ArgIter = try std.process.argsWithAllocator(ScratchFBA.allocator());
+    defer ArgIter.deinit();
+    if (!ArgIter.skip()) {
+        unreachable;
     }
+    const PatternsPathZ = try ArgIter.next(ScratchFBA.allocator()) orelse unreachable;
+
+    // Open file
+    PatternsFile = try std.fs.cwd().openFile(PatternsPathZ, .{});
 
     // Get pattern count
     var nPatterns: usize = 0;
     {
         const Reader = PatternsFile.reader();
-        while (true)
-        {
+        while (true) {
             const Byte = Reader.readByte() catch {
                 break; // NOTE(cjb): Possibility of missing last pattern here..
             };
-            if (Byte == '\n')
-            {
+            if (Byte == '\n') {
                 nPatterns += 1;
             }
         }
     }
 
     // Allocate Pattern, Flag, and ID buffer(s)
-    var PatternsZ = try HSFBA.allocator().alloc([*:0]u8, nPatterns);
+    var PatternsZ = try HSFBA.allocator().alloc([*c]u8, nPatterns);
     var Flags = try HSFBA.allocator().alloc(c_uint, nPatterns);
     var IDs = try HSFBA.allocator().alloc(c_uint, nPatterns);
 
@@ -56,10 +52,10 @@ pub fn main() !void
     const MaxRead = FileStat.size;
     var Data = try PatternsFile.reader().readUntilDelimiterOrEofAlloc(ScratchFBA.allocator(), '\n', MaxRead);
     while (Data != null) : (PatternIndex += 1) {
-        var PatternBuf: []u8 = try HSFBA.allocator().alloc(u8, Data.?.len + 1);
+        var PatternBuf = try HSFBA.allocator().alloc(u8, Data.?.len + 1);
         std.mem.copy(u8, PatternBuf, Data.?);
         PatternBuf[Data.?.len] = 0;
-        PatternsZ[PatternIndex] = PatternBuf[0..Data.?.len :0];
+        PatternsZ[PatternIndex] = PatternBuf.ptr;
         Flags[PatternIndex] = c.HS_FLAG_DOTALL;
         IDs[PatternIndex] = PatternIndex;
 
