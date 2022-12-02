@@ -1,4 +1,4 @@
-#include "jpca.c"
+#include "slab_allocator.c"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,12 +25,14 @@ int JPCExtract(job_posting_classifier *JPC, char *Text, unsigned int nTextBytes)
 
 int main()
 {
-    //TODO(cjb): Fixed sized slab blks
     //TODO(cjb): Multipage allocations
     //void *EntirePagePlus1 = SlabAllocatorAlloc(0x1001); // Expected allocation is 2 pages...
     SlabAllocatorInit(0);
-    void *_01alloc = SlabAllocatorAlloc(36);
-    void *_02alloc = SlabAllocatorAlloc(35); // force diffrent slab
+    void *_01alloc = SlabAllocatorAlloc(11);
+    void *_02alloc = SlabAllocatorAlloc(12); // same slab
+    void *_03alloc = SlabAllocatorAlloc(63); // force diffrent slab
+    void *_04alloc = SlabAllocatorAlloc(256); // force diffrent slab
+    void *_05alloc = SlabAllocatorAlloc(512); // force diffrent slab
     DEBUGPrintAllSlabs();
 
     char Text[] = "a quick brown foo";

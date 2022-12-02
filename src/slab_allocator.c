@@ -57,7 +57,7 @@ SlabInit(slab *S, uintptr_t *SlabStart, unsigned short Size)
     S->SlabStart = *SlabStart;
 
     /** Setup "FreeList" to point to each block */
-    unsigned int NumEntries = (PAGE_SIZE / Size) - 1;
+    unsigned int NumEntries = (PAGE_SIZE / Size);
     S->FreeList = (slab_entry *)*SlabStart;
     slab_entry *Current = S->FreeList;
     for (unsigned int SlabEntryIndex=1;
@@ -180,16 +180,18 @@ DEBUGPrintAllSlabs()//slab *SlabList)
     char CharBuffer[128];
     memset(CharBuffer, 0, sizeof(CharBuffer));
 
-    const int SlabBoxHeight = 20;
-    const int SlabBoxHorzPad = 10;
+    const int SlabBoxHeight = 17;
+    const int SlabBoxHorzPad = 4;
+
+    const char SlabEntryFmtStr[] = "%x";
 
     // NOTE(cjb): Cursor row/col pos starts from 1
-    const char TopBorderFmtStr[] = "*---Slab: %03d---*"; // TODO(cjb): fmt strs could make 3
+    const char TopBorderFmtStr[] = "*-%03d %03d-*"; // TODO(cjb): fmt strs could make 3
                                                          // dynamic....
     int TopBorderCursorXPos = 1;
     int TopBorderCursorYPos = 1;
 
-    const char BottomBorderFmtStr[] = "*---------------*";
+    const char BottomBorderFmtStr[] = "*---------*";
     int BottomBorderCursorXPos = 1;
     int BottomBorderCursorYPos = SlabBoxHeight;
 
@@ -207,7 +209,8 @@ DEBUGPrintAllSlabs()//slab *SlabList)
          Slab = Slab->NextSlab)
     {
         /** Top Border */
-        snprintf(CharBuffer, sizeof(CharBuffer) - 1, TopBorderFmtStr, SlabIndex++); /** Interpret fmt str */
+        snprintf(CharBuffer, sizeof(CharBuffer) - 1, TopBorderFmtStr,
+                SlabIndex, Slab->Size); /** Interpret fmt str */
         CursorToYX(TopBorderCursorYPos, TopBorderCursorXPos); /** Set top border cursor pos */
         printf(CharBuffer); /** Print Top border */
         TopBorderCursorXPos += strlen(CharBuffer)
@@ -232,6 +235,51 @@ DEBUGPrintAllSlabs()//slab *SlabList)
         BottomBorderCursorXPos = TopBorderCursorXPos; /** Update bottom border x */
         memset(CharBuffer, 0, sizeof(CharBuffer)); /** Clear char buffer */
 
+        /** Slab Entries */
+        unsigned int NumEntries = (PAGE_SIZE / Slab->Size);
+        slab_entry *Current = (slab_entry *)Slab->SlabStart;
+        for (unsigned int SlabEntryIndex=0;
+             SlabEntryIndex <= NumEntries;
+             ++SlabEntryIndex)
+        {
+            if ((SlabEntryIndex + LeftBorderCursorYPos >= SlabBoxHeight - 2))
+            {
+                int SlabsBetween = NumEntries - SlabEntryIndex - 2;
+                CursorToYX(LeftBorderCursorYPos + SlabEntryIndex,
+                        LeftBorderCursorXPos + 2); /** Set border cursor pos to entry */
+                snprintf(CharBuffer, sizeof(CharBuffer) - 1,
+                    "..%03d..", SlabsBetween); /** Interpret fmt str */
+                printf(CharBuffer); /** Print address */
+                memset(CharBuffer, 0, sizeof(CharBuffer)); /** Clear char buffer */
+
+                slab_entry *LastSlab = (slab_entry *)((uintptr_t)Current + (Slab->Size *
+                            (SlabsBetween)));
+                CursorToYX(LeftBorderCursorYPos + 1 + SlabEntryIndex,
+                        LeftBorderCursorXPos + 1); /** Set border cursor pos to entry */
+                snprintf(CharBuffer, sizeof(CharBuffer) - 1,
+                        SlabEntryFmtStr, LastSlab); /** Interpret fmt str */
+                printf(CharBuffer); /** Print address */
+                memset(CharBuffer, 0, sizeof(CharBuffer)); /** Clear char buffer */
+
+                break;
+            }
+
+            CursorToYX(LeftBorderCursorYPos + SlabEntryIndex,
+                    LeftBorderCursorXPos + 1); /** Set border cursor pos to entry */
+            snprintf(CharBuffer, sizeof(CharBuffer) - 1,
+                    SlabEntryFmtStr, Current); /** Interpret fmt str */
+            printf(CharBuffer); /** Print address */
+            memset(CharBuffer, 0, sizeof(CharBuffer)); /** Clear char buffer */
+
+            // Don't advance if this is the last entry
+            if (SlabEntryIndex == NumEntries)
+            {
+                break;
+            }
+
+            Current = Current->Next;
+        }
+
         /** Left Border */
         snprintf(CharBuffer, sizeof(CharBuffer) - 1, LeftBorderFmtStr); /** Interpret fmt str */
         for (int CurrentRow=SlabBoxHeight - 1; CurrentRow > 1; --CurrentRow)
@@ -241,9 +289,12 @@ DEBUGPrintAllSlabs()//slab *SlabList)
         }
         LeftBorderCursorXPos = TopBorderCursorXPos; /** Update left border x */
         memset(CharBuffer, 0, sizeof(CharBuffer)); /** Clear char buffer */
+
+        SlabIndex += 1;
     }
 
-    printf("\n\n\n\n\n\nEND OF DEBUG OUTPUT\n");
+    CursorToYX(SlabBoxHeight + 5, 1);
+    printf("END OF DEBUG OUTPUT\n");
 }
 
 // TODO(cjb): jpca struct? housing these 3 ptrs?
@@ -271,8 +322,17 @@ SlabAllocatorInit(uintptr_t MemStart)
 *
 */
 void *
-SlabAllocatorAlloc(size_t Size)
+SlabAllocatorAlloc(size_t RequestedSize)
 {
+    /** Figure out "good" bucket size i.e. power of 2 */
+    const unsigned short InitialBucketShift = 5;
+    unsigned short GoodBucketShift = InitialBucketShift;
+    while (RequestedSize > (1 << GoodBucketShift))
+    {
+        GoodBucketShift += 1;
+    }
+    unsigned short Size = (1 << GoodBucketShift);
+
     /** Walk slablist for compat block */
     uintptr_t NewLoc;
     slab *Slab = GlobalSlabList;
