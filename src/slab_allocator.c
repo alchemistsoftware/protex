@@ -7,7 +7,6 @@
 #include <assert.h>
 #include <sys/mman.h>
 
-static int PAGE_SIZE = 0;
 
 /** SOURCE: http://3zanders.co.uk/2018/02/24/the-slab-allocator/ */
 
@@ -31,9 +30,43 @@ typedef struct slab
     unsigned short Size;   /** Size of objects within a single page */
 } slab;
 
-slab *GlobalSlabList;
-slab *GlobalSlabMetaData;
-uintptr_t GlobalMemStart;
+typedef struct
+{
+    unsigned char *Buf;
+    size_t BufLen;
+    size_t Offset;
+    slab *SlabList;
+    slab *MetaSlab;
+} slab_allocator;
+
+/** https://www.gingerbill.org/article/2019/02/08/memory-allocation-strategies-002/ */
+
+bool
+IsPowerOfTwo(uintptr_t x)
+{
+    return (x & (x - 1)) == 0;
+}
+
+uintptr_t
+AlignForward(uintptr_t Ptr, size_t Align)
+{
+    assert(IsPowerOfTwo(Align));
+
+    uintptr_t Result = Ptr;
+    uintptr_t A = (uintptr_t)Align;
+
+    /** Same as (Result % A) but faster as 'A' is a power of two */
+    uintptr_t Modulo = Result & (A - 1);
+
+    if (Modulo != 0)
+    {
+        Result += A - Modulo;
+    }
+
+    return (Result);
+}
+
+static size_t PAGE_SIZE = 0;
 
 /***
 * Initializes a slab, taking a virtual memory location to be managed by this slab as well as the
@@ -46,27 +79,48 @@ uintptr_t GlobalMemStart;
 *   - Size: Size of objects in this slab
 */
 static void
-SlabInit(slab *S, uintptr_t *SlabStart, unsigned short Size)
+SlabInitAlign(slab_allocator *A, slab *S, size_t Size, size_t Align)
 {
-    /** Map page to "SlabStart" and clear it */
-    *SlabStart = (uintptr_t)aligned_alloc(PAGE_SIZE, PAGE_SIZE);
-    memset((void *)*SlabStart, 0, PAGE_SIZE);
+    /** Forward align 'Offset' to the specified alignment */
+    uintptr_t CurrentPtr = (uintptr_t)A->Buf + (uintptr_t)A->Offset;
+    uintptr_t Offset = AlignForward(CurrentPtr, Align);
+    Offset -= (uintptr_t)A->Buf; /** Change to relative offset */
 
-    S->NextSlab = NULL;
-    S->Size = Size;
-    S->SlabStart = *SlabStart;
-
-    /** Setup "FreeList" to point to each block */
-    unsigned int NumEntries = (PAGE_SIZE / Size);
-    S->FreeList = (slab_entry *)*SlabStart;
-    slab_entry *Current = S->FreeList;
-    for (unsigned int SlabEntryIndex=1;
-         SlabEntryIndex < NumEntries;
-         ++SlabEntryIndex)
+    /** Check to see if the backing memory has space left */
+    if (Offset + PAGE_SIZE <= A->BufLen)
     {
-        Current->Next = (slab_entry *)(*SlabStart + (SlabEntryIndex * Size));
-        Current = Current->Next;
+        void *Ptr = &A->Buf[Offset];
+        A->Offset = Offset + PAGE_SIZE;
+
+        /** Zero out memory by default */
+        memset(Ptr, 0, PAGE_SIZE);
+
+        S->NextSlab = NULL;
+        S->Size = Size;
+        S->SlabStart = (uintptr_t)Ptr;
+
+        /** Setup "FreeList" to point to each block */
+        size_t NumEntries = (PAGE_SIZE / Size);
+        S->FreeList = (slab_entry *)Ptr;
+        slab_entry *Current = S->FreeList;
+        for (unsigned int SlabEntryIndex=1;
+             SlabEntryIndex < NumEntries;
+             ++SlabEntryIndex)
+        {
+            Current->Next = (slab_entry *)(S->SlabStart + (SlabEntryIndex * Size));
+            Current = Current->Next;
+        }
     }
+}
+
+#ifndef DEFAULT_ALIGNMENT
+#define DEFAULT_ALIGNMENT (2*sizeof(void *))
+#endif
+
+static void
+SlabInit(slab_allocator *A, slab *S, size_t Size)
+{
+   return SlabInitAlign(A, S, Size, DEFAULT_ALIGNMENT);
 }
 
 /***
@@ -82,7 +136,7 @@ SlabInit(slab *S, uintptr_t *SlabStart, unsigned short Size)
 * - Returns: true upon success, false otherwise
 */
 static bool
-SlabAlloc(slab *S, unsigned int Size, uintptr_t *NewLoc)
+SlabAlloc(slab *S, size_t Size, uintptr_t *NewLoc)
 {
     bool Result = true;
 
@@ -130,30 +184,31 @@ SlabFree(slab *S, uintptr_t Location)
 }
 
 /***
-* Allocates and Initializes a "slab of slabs"
+* Allocates and Initializes "slab of slabs"
 *
 * - Paramaters:
 *   - SlabStart: Location to store new slab
 *
 * - Returns: Ptr to freshly allocated slab
 */
-static slab *
-SlabAllocMeta(uintptr_t *SlabStart)
+void // TODO(cjb): make this return bool
+SlabAllocMeta(slab_allocator *A)//uintptr_t *SlabStart)
 {
     /** Initialize metadata slab */
     slab SlabMetaData;
-    SlabInit(&SlabMetaData, SlabStart, sizeof(slab));
+    SlabInit(A, &SlabMetaData, sizeof(slab));
 
     /** Allcoate slot for slab created above */
     uintptr_t SlabLoc;
     bool DidAlloc = SlabAlloc(&SlabMetaData, sizeof(slab), &SlabLoc);
-    assert(DidAlloc && (*SlabStart == SlabLoc)); /** Expect first block is used */
+    assert(DidAlloc && "Failed to allocate MetaSlab");
 
-    /** Get ptr to slab */
+    /** Get ptr to slab and copy it to MetaSlab */
     slab *NewSlabMeta = (slab *)SlabLoc;
     *NewSlabMeta = SlabMetaData;
-    return NewSlabMeta;
+    A->MetaSlab = NewSlabMeta;
 }
+
 
 static void
 ClearScreen()
@@ -172,7 +227,7 @@ CursorToYX(int Y, int X)
 // - Used blocks
 // - Slab size
 void
-DEBUGPrintAllSlabs()//slab *SlabList)
+DEBUGPrintAllSlabs(slab_allocator *A)
 {
     ClearScreen();
     size_t SlabIndex = 0;
@@ -204,7 +259,7 @@ DEBUGPrintAllSlabs()//slab *SlabList)
     int LeftBorderCursorXPos = 1;
     int LeftBorderCursorYPos = 2;
 
-    for (slab *Slab = GlobalSlabList;
+    for (slab *Slab = A->SlabList;
          Slab != NULL;
          Slab = Slab->NextSlab)
     {
@@ -236,7 +291,7 @@ DEBUGPrintAllSlabs()//slab *SlabList)
         memset(CharBuffer, 0, sizeof(CharBuffer)); /** Clear char buffer */
 
         /** Slab Entries */
-        unsigned int NumEntries = (PAGE_SIZE / Slab->Size);
+        size_t NumEntries = (PAGE_SIZE / Slab->Size);
         slab_entry *Current = (slab_entry *)Slab->SlabStart;
         for (unsigned int SlabEntryIndex=0;
              SlabEntryIndex <= NumEntries;
@@ -297,9 +352,6 @@ DEBUGPrintAllSlabs()//slab *SlabList)
     printf("END OF DEBUG OUTPUT\n");
 }
 
-// TODO(cjb): jpca struct? housing these 3 ptrs?
-// something like slab_allocator_data?
-//
 // The following functions wrap the slab allocation system
 
 /***
@@ -309,64 +361,98 @@ DEBUGPrintAllSlabs()//slab *SlabList)
 *   - MemStart: Initial location of "GlobalMemStart"
 */
 void
-SlabAllocatorInit(uintptr_t MemStart)
+SlabAllocatorInit(slab_allocator *A, unsigned char *BackingBuffer, size_t BackingBufferLength)
 {
     PAGE_SIZE = getpagesize();
 
-    GlobalSlabList = NULL;
-    GlobalSlabMetaData = SlabAllocMeta(&MemStart);
-    GlobalMemStart = MemStart;
+    A->SlabList = NULL;
+    A->Buf = BackingBuffer;
+    A->BufLen = BackingBufferLength;
+    A->Offset = 0;
+    SlabAllocMeta(A);
 }
 
-/**
-*
-*/
+#ifndef INITIAL_BUCKET_SHIFT
+#define INITIAL_BUCKET_SHIFT 5
+#endif
+
+#ifndef MAX_BUCKET_SHIFT
+#define MAX_BUCKET_SHIFT 8
+#endif
+
 void *
-SlabAllocatorAlloc(size_t RequestedSize)
+SlabAllocatorAlloc(slab_allocator *A, size_t RequestedSize)
 {
-    /** Figure out "good" bucket size i.e. power of 2 */
-    const unsigned short InitialBucketShift = 5;
-    unsigned short GoodBucketShift = InitialBucketShift;
-    while (RequestedSize > (1 << GoodBucketShift))
+    /** Figure out "good" bucket size i.e. nice reusable power of 2 */
+    size_t GoodBucketShift = INITIAL_BUCKET_SHIFT;
+    while ((RequestedSize > (1 << GoodBucketShift)) &&
+           (GoodBucketShift < MAX_BUCKET_SHIFT))
     {
         GoodBucketShift += 1;
     }
-    unsigned short Size = (1 << GoodBucketShift);
+    size_t BucketSize = (1 << GoodBucketShift);
+    size_t nRequiredSlabAllocs = 1;
 
-    /** Walk slablist for compat block */
-    uintptr_t NewLoc;
-    slab *Slab = GlobalSlabList;
-    for (; Slab; Slab = Slab->NextSlab)
+    /** If requested size is still larger than the bucket size; will require multi slab block
+      allocations */
+    if (RequestedSize > BucketSize)
     {
-        if (SlabAlloc(Slab, Size, &NewLoc)) /** Found block */
+        nRequiredSlabAllocs = ((RequestedSize / BucketSize) +
+                               (RequestedSize & (BucketSize - 1)));
+    }
+
+    size_t SlabAllocCount=0;
+    uintptr_t BaseLoc;
+    while(1)
+    {
+        /** Walk slablist for compat block */
+        slab *Slab = A->SlabList;
+        for (; Slab; Slab = Slab->NextSlab)
         {
-            return (void *)NewLoc;
+            while (SlabAllocCount < nRequiredSlabAllocs)
+            {
+                uintptr_t Tmp;
+                if (SlabAlloc(Slab, BucketSize, &Tmp)) /** Found block */
+                {
+                    if (SlabAllocCount == 0) /** Store addr of first block */
+                    {
+                        BaseLoc= Tmp;
+                    }
+                    if (SlabAllocCount + 1 == nRequiredSlabAllocs)
+                    {
+                        return (void *)BaseLoc;
+                    }
+                    SlabAllocCount += 1;
+                }
+                else
+                {
+                    break;
+                }
+            }
         }
+
+        /** Allocate for size */
+        uintptr_t SlabLoc;
+        bool DidAlloc = SlabAlloc(A->MetaSlab, sizeof(slab), &SlabLoc);
+        if (!DidAlloc) /** Allocate new metadata slab */
+        {
+            SlabAllocMeta(A); // <-- This can fail
+            SlabAlloc(A->MetaSlab, sizeof(slab), &SlabLoc);
+        }
+
+        /** Initialize new slab */
+        slab *NewSlab = (slab *)SlabLoc;
+        SlabInit(A, NewSlab, BucketSize); // <--- This can also fail
+
+        /** Update slab list */
+        NewSlab->NextSlab = A->SlabList;
+        A->SlabList = NewSlab;
     }
-
-    /** Allocate new slab */
-    uintptr_t SlabLoc;
-    bool DidAlloc = SlabAlloc(GlobalSlabMetaData, sizeof(slab), &SlabLoc);
-    if (!DidAlloc) /** Allocate new metadata slab */
-    {
-        GlobalSlabMetaData = SlabAllocMeta(&GlobalMemStart);
-        GlobalMemStart += PAGE_SIZE;
-        SlabAlloc(GlobalSlabMetaData, sizeof(slab), &SlabLoc);
-    }
-
-    /** Initialize new slab */
-    slab *NewSlab = (slab *)SlabLoc;
-    SlabInit(NewSlab, &GlobalMemStart, Size);
-    NewSlab->NextSlab = GlobalSlabList;
-    GlobalSlabList = NewSlab;
-
-    /** Allocate block of memory inside new slab */
-    SlabAlloc(NewSlab, Size, &NewLoc);
-    return (void *)NewLoc;
+    assert(0 && "Invalid code path");
 }
 
 void
-SlabAllocatorFree(void *Ptr)
+SlabAllocatorFree(slab_allocator *A, void *Ptr)
 {
     if (!Ptr)
     {
@@ -374,7 +460,7 @@ SlabAllocatorFree(void *Ptr)
     }
 
     uintptr_t Loc = (uintptr_t)Ptr;
-    for (slab *Slab = GlobalSlabList;
+    for (slab *Slab = A->SlabList;
          Slab != NULL;
          Slab = Slab->NextSlab)
     {

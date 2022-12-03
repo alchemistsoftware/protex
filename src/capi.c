@@ -25,29 +25,28 @@ int JPCExtract(job_posting_classifier *JPC, char *Text, unsigned int nTextBytes)
 
 int main()
 {
-    //TODO(cjb): Multipage allocations
-    //void *EntirePagePlus1 = SlabAllocatorAlloc(0x1001); // Expected allocation is 2 pages...
-    SlabAllocatorInit(0);
-    void *_01alloc = SlabAllocatorAlloc(11);
-    void *_02alloc = SlabAllocatorAlloc(12); // same slab
-    void *_03alloc = SlabAllocatorAlloc(63); // force diffrent slab
-    void *_04alloc = SlabAllocatorAlloc(256); // force diffrent slab
-    void *_05alloc = SlabAllocatorAlloc(512); // force diffrent slab
-    DEBUGPrintAllSlabs();
+    slab_allocator A;
+    size_t BackingBufferSize = 1024*1024; // 1mb
+    void *BackingBuffer = calloc(1, BackingBufferSize);
+    SlabAllocatorInit(&A, BackingBuffer, BackingBufferSize);
+    void *EntirePagePlus1 = SlabAllocatorAlloc(&A, 0x1001); // Expected allocation is 2 slabs
+    DEBUGPrintAllSlabs(&A);
 
-    char Text[] = "a quick brown foo";
-    job_posting_classifier JPC = {};
+//    void *_01alloc = SlabAllocatorAlloc(&A, 11);
+//    SlabAllocatorFree(&A, _01alloc);
 
-    void *Mem = calloc(1, 1024*10);
-    if (JPCInit(&JPC, Mem, 1024*10,"./data/db.bin") == JPC_SUCCESS)
-    {
-        JPCExtract(&JPC,Text, sizeof(Text));
-        JPCDeinit(&JPC);
-        puts("OK");
-    }
-    else
-    {
-        puts("FAIL");
-    }
-    while(1) {}
+
+    //char Text[] = "a quick brown foo";
+    //job_posting_classifier JPC = {};
+
+    //if (JPCInit(&JPC, Mem, 1024*10,"./data/db.bin") == JPC_SUCCESS)
+    //{
+    //    JPCExtract(&JPC,Text, sizeof(Text));
+    //    JPCDeinit(&JPC);
+    //    puts("OK");
+    //}
+    //else
+    //{
+    //    puts("FAIL");
+    //}
 }
