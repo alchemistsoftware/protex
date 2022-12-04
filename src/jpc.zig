@@ -13,6 +13,7 @@ const job_posting_classifier = extern struct {
 pub const JPC_SUCCESS: c_int = 0; // Call was executed successfully
 pub const JPC_INVALID: c_int = -1; // Bad paramater was passed
 pub const JPC_UNKNOWN_ERROR: c_int = -2; // Unhandled internal error
+pub const JPC_NOMEM: c_int = -3; // A memory allocation failed
 
 fn HSSuccessOrErr(Writer: std.fs.File.Writer, HSReturnCode: c_int) !void {
     switch (HSReturnCode) {
@@ -32,55 +33,84 @@ fn HSSuccessOrErr(Writer: std.fs.File.Writer, HSReturnCode: c_int) !void {
         c.HS_UNKNOWN_ERROR => Writer.print("HS_UNKNOWN_ERROR\n", .{}) catch {},
         else => unreachable,
     }
-
     return error.Error;
 }
 
-// TODO(cjb): pass me slab allocator...
-export fn JPCInit(JPC: ?*job_posting_classifier, JPCMem: ?*anyopaque, JPCMemSize: usize,
+//const jpc_alloc = *const fn(Size: usize) ?*anyopaque;
+//const jpc_free = *const fn(Ptr: ?*anyopaque) void;
+
+// TODO(cjb): pass me acutal allocator...
+export fn JPCInit(JPC: ?*job_posting_classifier, JPCFixedBuffer: ?*anyopaque, JPCFixedBufferSize: usize,
     ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
 {
     const Writer = std.io.getStdErr().writer();
 
-    var ByteBuffer = @ptrCast([*]u8, JPCMem.?);
-    var FBA = std.heap.FixedBufferAllocator.init(ByteBuffer[0..JPCMemSize]);
+    var ByteBuffer = @ptrCast([*]u8, JPCFixedBuffer.?);
+    var FBA = std.heap.FixedBufferAllocator.init(ByteBuffer[0..JPCFixedBufferSize]);
 
     var PathLen: usize = 0;
-    while (ArtifactPathZ.?[PathLen] != 0) {
-        PathLen += 1;
-    }
-
-    const ArtifactFile = std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{}) catch |Err| {
-        switch (Err) {
+    while (ArtifactPathZ.?[PathLen] != 0) { PathLen += 1; }
+    const ArtifactFile = std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{}) catch |Err|
+    {
+        switch (Err)
+        {
             error.FileNotFound => return JPC_INVALID,
-            else => {
-                Writer.print("{}\n", .{Err}) catch {};
-                return JPC_UNKNOWN_ERROR;
-            },
+            else => Writer.print("{}\n", .{Err}) catch {},
         }
+        unreachable;
     };
 
-    const FileStat = ArtifactFile.stat() catch |Err| {
-        Writer.print("{}\n", .{Err}) catch {};
-        return JPC_UNKNOWN_ERROR;
+    const FileStat = ArtifactFile.stat() catch |Err|
+    {
+        switch(Err)
+        {
+            else => Writer.print("{}\n", .{Err}) catch {},
+        }
+        unreachable;
     };
 
     const FSize = FileStat.size;
+    const SerializedBytes = ArtifactFile.reader().readAllAlloc(FBA.allocator(), FSize) catch |Err|
+    {
+        switch(Err)
+        {
+            error.OutOfMemory => return JPC_NOMEM,
+            else => Writer.print("{}\n", .{Err}) catch {},
+        }
+        unreachable;
+    };
+    defer FBA.allocator().free(SerializedBytes);
 
-    const Bytes = ArtifactFile.reader().readAllAlloc(FBA.allocator(), FSize) catch |Err| {
-        Writer.print("{}\n", .{Err}) catch {};
+    // TODO(cjb): hs_set_misc_allocator()
+
+    var DBSize: usize = undefined;
+    HSSuccessOrErr(Writer, c.hs_serialized_database_size(SerializedBytes.ptr, SerializedBytes.len,
+            &DBSize)) catch
+    {
         return JPC_UNKNOWN_ERROR;
     };
 
-    // TODO(cjb): allocate hs database store upfront
-    JPC.?.Database = null;
-    HSSuccessOrErr(Writer, c.hs_deserialize_database(Bytes.ptr, Bytes.len, &JPC.?.Database)) catch
+    var DBMem = FBA.allocator().alignedAlloc(u8, 8, DBSize) catch |Err|
+    {
+        switch(Err)
+        {
+            error.OutOfMemory => return JPC_NOMEM,
+            else => Writer.print("{}\n", .{Err}) catch {},
+        }
+        unreachable;
+    };
+
+    JPC.?.Database = @ptrCast(*c.hs_database_t, DBMem);
+    HSSuccessOrErr(Writer, c.hs_deserialize_database_at(SerializedBytes.ptr, SerializedBytes.len,
+            JPC.?.Database)) catch
+    {
         return JPC_UNKNOWN_ERROR;
+    };
 
     // TODO(cjb): set allocator used for scratch
     JPC.?.Scratch = null;
-    HSSuccessOrErr(Writer, c.hs_alloc_scratch(JPC.?.Database, &JPC.?.Scratch)) catch {
-        _ = c.hs_free_database(JPC.?.Database);
+    HSSuccessOrErr(Writer, c.hs_alloc_scratch(JPC.?.Database, &JPC.?.Scratch)) catch
+    {
         return JPC_UNKNOWN_ERROR;
     };
 
@@ -100,7 +130,6 @@ fn EventHandler(id: c_uint, from: c_ulonglong, to: c_ulonglong, flags: c_uint, C
     return 0;
 }
 
-// TODO(cjb): pass mem slab allocator
 export fn JPCExtract(JPC: ?*job_posting_classifier, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C)
     c_int
 {
@@ -119,7 +148,6 @@ export fn JPCExtract(JPC: ?*job_posting_classifier, Text: ?[*]u8, nTextBytes: c_
 
 export fn JPCDeinit(JPC: ?*job_posting_classifier) callconv(.C) c_int {
     _ = c.hs_free_scratch(JPC.?.Scratch);
-    _ = c.hs_free_database(JPC.?.Database);
 
     return JPC_SUCCESS;
 }

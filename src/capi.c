@@ -25,28 +25,28 @@ int JPCExtract(job_posting_classifier *JPC, char *Text, unsigned int nTextBytes)
 
 int main()
 {
-    slab_allocator A;
-    size_t BackingBufferSize = 1024*1024; // 1mb
-    void *BackingBuffer = calloc(1, BackingBufferSize);
-    SlabAllocatorInit(&A, BackingBuffer, BackingBufferSize);
-    void *EntirePagePlus1 = SlabAllocatorAlloc(&A, 0x1001); // Expected allocation is 2 slabs
-    DEBUGPrintAllSlabs(&A);
+    //slab_allocator A;
+    //size_t BackingBufferSize = 1024*1024*8; // 8mb
+    //void *BackingBuffer = calloc(1, BackingBufferSize);
+    //SlabAllocatorInit(&A, BackingBuffer, BackingBufferSize);
+    //void *JPCScratch = SlabAllocatorAlloc(&A, JPCScratchSize);
+    //DEBUGPrintAllSlabs(&A);
 
-//    void *_01alloc = SlabAllocatorAlloc(&A, 11);
-//    SlabAllocatorFree(&A, _01alloc);
+    size_t JPCFixedBufferSize = 1024*1024*8;
+    void *JPCFixedBuffer = calloc(1, JPCFixedBufferSize);
+    char Text[] = "a quick brown foo";
+    job_posting_classifier JPC = {};
+    if (JPCInit(&JPC, JPCFixedBuffer, JPCFixedBufferSize, "./data/db.bin") == JPC_SUCCESS)
+    {
+        JPCExtract(&JPC,Text, sizeof(Text));
+        JPCDeinit(&JPC);
+        puts("SUCCESS");
+    }
+    else
+    {
+        puts("FAIL");
+    }
 
+    free(JPCFixedBuffer);
 
-    //char Text[] = "a quick brown foo";
-    //job_posting_classifier JPC = {};
-
-    //if (JPCInit(&JPC, Mem, 1024*10,"./data/db.bin") == JPC_SUCCESS)
-    //{
-    //    JPCExtract(&JPC,Text, sizeof(Text));
-    //    JPCDeinit(&JPC);
-    //    puts("OK");
-    //}
-    //else
-    //{
-    //    puts("FAIL");
-    //}
 }

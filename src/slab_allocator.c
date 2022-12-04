@@ -34,7 +34,8 @@ typedef struct
 {
     unsigned char *Buf;
     size_t BufLen;
-    size_t Offset;
+    size_t LeftOffset;
+    size_t RightOffset;
     slab *SlabList;
     slab *MetaSlab;
 } slab_allocator;
@@ -48,22 +49,41 @@ IsPowerOfTwo(uintptr_t x)
 }
 
 uintptr_t
-AlignForward(uintptr_t Ptr, size_t Align)
+AlignBackward(uintptr_t Ptr, size_t Align)
 {
-    assert(IsPowerOfTwo(Align));
+    assert(IsPowerOfTwo(Align) && "Align isn't a power of 2");
 
-    uintptr_t Result = Ptr;
+    uintptr_t P = Ptr;
     uintptr_t A = (uintptr_t)Align;
 
-    /** Same as (Result % A) but faster as 'A' is a power of two */
-    uintptr_t Modulo = Result & (A - 1);
+    /** Same as (P % A) but faster as 'A' is a power of two */
+    uintptr_t Modulo = P & (A - 1);
 
     if (Modulo != 0)
     {
-        Result += A - Modulo;
+        P -= Modulo;
     }
 
-    return (Result);
+    return (P);
+}
+
+uintptr_t
+AlignForward(uintptr_t Ptr, size_t Align)
+{
+    assert(IsPowerOfTwo(Align) && "Align isn't a power of 2");
+
+    uintptr_t P = Ptr;
+    uintptr_t A = (uintptr_t)Align;
+
+    /** Same as (P % A) but faster as 'A' is a power of two */
+    uintptr_t Modulo = P & (A - 1);
+
+    if (Modulo != 0)
+    {
+        P += A - Modulo;
+    }
+
+    return (P);
 }
 
 static size_t PAGE_SIZE = 0;
@@ -78,38 +98,56 @@ static size_t PAGE_SIZE = 0;
 *   - SlabStart: Address which the os will map to
 *   - Size: Size of objects in this slab
 */
-static void
-SlabInitAlign(slab_allocator *A, slab *S, size_t Size, size_t Align)
+void
+SlabInitAlign(slab_allocator *A, slab *S, size_t Size, size_t Align, bool IsMetaSlab)
 {
-    /** Forward align 'Offset' to the specified alignment */
-    uintptr_t CurrentPtr = (uintptr_t)A->Buf + (uintptr_t)A->Offset;
-    uintptr_t Offset = AlignForward(CurrentPtr, Align);
-    Offset -= (uintptr_t)A->Buf; /** Change to relative offset */
-
-    /** Check to see if the backing memory has space left */
-    if (Offset + PAGE_SIZE <= A->BufLen)
+    void *Ptr; // Base slab ptr
+    if (IsMetaSlab)
     {
-        void *Ptr = &A->Buf[Offset];
-        A->Offset = Offset + PAGE_SIZE;
+        /** Forward align 'Offset' to the specified alignment */
+        uintptr_t CurrentPtr = (uintptr_t)A->Buf + (uintptr_t)A->LeftOffset;
+        uintptr_t Offset = AlignForward(CurrentPtr, Align);
+        Offset -= (uintptr_t)A->Buf; /** Change to relative offset */
 
-        /** Zero out memory by default */
-        memset(Ptr, 0, PAGE_SIZE);
-
-        S->NextSlab = NULL;
-        S->Size = Size;
-        S->SlabStart = (uintptr_t)Ptr;
-
-        /** Setup "FreeList" to point to each block */
-        size_t NumEntries = (PAGE_SIZE / Size);
-        S->FreeList = (slab_entry *)Ptr;
-        slab_entry *Current = S->FreeList;
-        for (unsigned int SlabEntryIndex=1;
-             SlabEntryIndex < NumEntries;
-             ++SlabEntryIndex)
+        /** Check to see if the backing memory has space left */
+        if (Offset + PAGE_SIZE <= A->RightOffset)
         {
-            Current->Next = (slab_entry *)(S->SlabStart + (SlabEntryIndex * Size));
-            Current = Current->Next;
+            Ptr = &A->Buf[Offset];
+            A->LeftOffset = Offset + PAGE_SIZE;
         }
+    }
+    else
+    {
+        /** Backward align 'Offset' to the specified alignment */
+        uintptr_t CurrentPtr = (uintptr_t)A->Buf + (uintptr_t)A->RightOffset;
+        uintptr_t Offset = AlignBackward(CurrentPtr, Align);
+        Offset -= (uintptr_t)A->Buf; /** Change to relative offset */
+
+        /** Check to see if the backing memory has space left */
+        if (Offset - PAGE_SIZE > A->LeftOffset)
+        {
+            Ptr = &A->Buf[Offset - PAGE_SIZE];
+            A->RightOffset = Offset - PAGE_SIZE;
+        }
+    }
+
+    /** Zero out memory by default */
+    memset(Ptr, 0, PAGE_SIZE);
+
+    S->NextSlab = NULL;
+    S->Size = Size;
+    S->SlabStart = (uintptr_t)Ptr;
+
+    /** Setup "FreeList" to point to each block */
+    size_t NumEntries = (PAGE_SIZE / Size);
+    S->FreeList = (slab_entry *)Ptr;
+    slab_entry *Current = S->FreeList;
+    for (unsigned int SlabEntryIndex=1;
+         SlabEntryIndex < NumEntries;
+         ++SlabEntryIndex)
+    {
+        Current->Next = (slab_entry *)(S->SlabStart + (SlabEntryIndex * Size));
+        Current = Current->Next;
     }
 }
 
@@ -117,10 +155,10 @@ SlabInitAlign(slab_allocator *A, slab *S, size_t Size, size_t Align)
 #define DEFAULT_ALIGNMENT (2*sizeof(void *))
 #endif
 
-static void
-SlabInit(slab_allocator *A, slab *S, size_t Size)
+void
+SlabInit(slab_allocator *A, slab *S, size_t Size, bool IsMetaSlab)
 {
-   return SlabInitAlign(A, S, Size, DEFAULT_ALIGNMENT);
+   return SlabInitAlign(A, S, Size, DEFAULT_ALIGNMENT, IsMetaSlab);
 }
 
 /***
@@ -135,7 +173,7 @@ SlabInit(slab_allocator *A, slab *S, size_t Size)
 *
 * - Returns: true upon success, false otherwise
 */
-static bool
+bool
 SlabAlloc(slab *S, size_t Size, uintptr_t *NewLoc)
 {
     bool Result = true;
@@ -163,7 +201,7 @@ SlabAlloc(slab *S, size_t Size, uintptr_t *NewLoc)
 *
 * - Returns: true upon success, false otherwise
 */
-static bool
+bool
 SlabFree(slab *S, uintptr_t Location)
 {
     bool Result = true;
@@ -196,7 +234,7 @@ SlabAllocMeta(slab_allocator *A)//uintptr_t *SlabStart)
 {
     /** Initialize metadata slab */
     slab SlabMetaData;
-    SlabInit(A, &SlabMetaData, sizeof(slab));
+    SlabInit(A, &SlabMetaData, sizeof(slab), true);
 
     /** Allcoate slot for slab created above */
     uintptr_t SlabLoc;
@@ -210,13 +248,13 @@ SlabAllocMeta(slab_allocator *A)//uintptr_t *SlabStart)
 }
 
 
-static void
+void
 ClearScreen()
 {
     printf("\033[H\033[J");
 }
 
-static void
+void
 CursorToYX(int Y, int X)
 {
     printf("\033[%d;%df", (Y), (X));
@@ -293,9 +331,8 @@ DEBUGPrintAllSlabs(slab_allocator *A)
         /** Slab Entries */
         size_t NumEntries = (PAGE_SIZE / Slab->Size);
         slab_entry *Current = (slab_entry *)Slab->SlabStart;
-        for (unsigned int SlabEntryIndex=0;
-             SlabEntryIndex <= NumEntries;
-             ++SlabEntryIndex)
+        size_t SlabEntryIndex = 0;
+        while (Current != NULL)
         {
             if ((SlabEntryIndex + LeftBorderCursorYPos >= SlabBoxHeight - 2))
             {
@@ -331,8 +368,8 @@ DEBUGPrintAllSlabs(slab_allocator *A)
             {
                 break;
             }
-
             Current = Current->Next;
+            SlabEntryIndex += 1;
         }
 
         /** Left Border */
@@ -368,7 +405,8 @@ SlabAllocatorInit(slab_allocator *A, unsigned char *BackingBuffer, size_t Backin
     A->SlabList = NULL;
     A->Buf = BackingBuffer;
     A->BufLen = BackingBufferLength;
-    A->Offset = 0;
+    A->LeftOffset = 0;
+    A->RightOffset = BackingBufferLength;
     SlabAllocMeta(A);
 }
 
@@ -377,7 +415,7 @@ SlabAllocatorInit(slab_allocator *A, unsigned char *BackingBuffer, size_t Backin
 #endif
 
 #ifndef MAX_BUCKET_SHIFT
-#define MAX_BUCKET_SHIFT 8
+#define MAX_BUCKET_SHIFT 10
 #endif
 
 void *
@@ -416,7 +454,7 @@ SlabAllocatorAlloc(slab_allocator *A, size_t RequestedSize)
                 {
                     if (SlabAllocCount == 0) /** Store addr of first block */
                     {
-                        BaseLoc= Tmp;
+                        BaseLoc = Tmp;
                     }
                     if (SlabAllocCount + 1 == nRequiredSlabAllocs)
                     {
@@ -431,18 +469,18 @@ SlabAllocatorAlloc(slab_allocator *A, size_t RequestedSize)
             }
         }
 
-        /** Allocate for size */
+        /** Try and pop a metadata slab */
         uintptr_t SlabLoc;
         bool DidAlloc = SlabAlloc(A->MetaSlab, sizeof(slab), &SlabLoc);
-        if (!DidAlloc) /** Allocate new metadata slab */
+        if (!DidAlloc) /** Need more metadata space */
         {
-            SlabAllocMeta(A); // <-- This can fail
+            SlabAllocMeta(A);
             SlabAlloc(A->MetaSlab, sizeof(slab), &SlabLoc);
         }
 
         /** Initialize new slab */
         slab *NewSlab = (slab *)SlabLoc;
-        SlabInit(A, NewSlab, BucketSize); // <--- This can also fail
+        SlabInit(A, NewSlab, BucketSize, false);
 
         /** Update slab list */
         NewSlab->NextSlab = A->SlabList;
