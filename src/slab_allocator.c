@@ -7,7 +7,6 @@
 #include <assert.h>
 #include <sys/mman.h>
 
-
 /** SOURCE: http://3zanders.co.uk/2018/02/24/the-slab-allocator/ */
 
 /***
@@ -139,7 +138,7 @@ SlabInitAlign(slab_allocator *A, slab *S, size_t Size, size_t Align, bool IsMeta
     S->SlabStart = (uintptr_t)Ptr;
 
     /** Setup "FreeList" to point to each block */
-    size_t NumEntries = (PAGE_SIZE / Size);
+    size_t NumEntries = (PAGE_SIZE / Size) - 1;
     S->FreeList = (slab_entry *)Ptr;
     slab_entry *Current = S->FreeList;
     for (unsigned int SlabEntryIndex=1;
@@ -247,7 +246,6 @@ SlabAllocMeta(slab_allocator *A)//uintptr_t *SlabStart)
     A->MetaSlab = NewSlabMeta;
 }
 
-
 void
 ClearScreen()
 {
@@ -329,7 +327,7 @@ DEBUGPrintAllSlabs(slab_allocator *A)
         memset(CharBuffer, 0, sizeof(CharBuffer)); /** Clear char buffer */
 
         /** Slab Entries */
-        size_t NumEntries = (PAGE_SIZE / Slab->Size);
+        size_t NumEntries = (PAGE_SIZE / Slab->Size) - 1;
         slab_entry *Current = (slab_entry *)Slab->SlabStart;
         size_t SlabEntryIndex = 0;
         while (Current != NULL)
@@ -478,7 +476,7 @@ SlabAllocatorAlloc(slab_allocator *A, size_t RequestedSize)
             SlabAlloc(A->MetaSlab, sizeof(slab), &SlabLoc);
         }
 
-        /** Initialize new slab */
+        /** Initialize slab */
         slab *NewSlab = (slab *)SlabLoc;
         SlabInit(A, NewSlab, BucketSize, false);
 

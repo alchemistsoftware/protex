@@ -1,11 +1,272 @@
 const std = @import("std");
 
+//TODO(cjb):
+// - SlabAllocatorInit store a ref to the allocator so it doesn't need to be passed to alloc and
+// free?
+// - Some sort of set alloactor function/interface for jpc
+// - How does jpc handle allocation without setting an allocator?
+
+pub const slab_entry = extern struct
+{
+    Next: ?*slab_entry,
+};
+
+pub const slab = extern struct
+{
+    NextSlab: ?*slab,
+    FreeList: ?*slab_entry,
+    SlabStart: usize,
+    Size: usize,
+};
+
+pub const slab_allocator = extern struct
+{
+    Buf: ?[*]u8,
+    BufLen: usize,
+    LeftOffset: usize,
+    RightOffset: usize,
+    SlabList: ?*slab,
+    MetaSlab: ?*slab,
+};
+
+fn IsPowerOfTwo(X: usize) bool
+{
+    return (X & (X - 1)) == 0;
+}
+
+fn AlignBackward(Ptr: usize, Align: usize) usize
+{
+    std.debug.assert(IsPowerOfTwo(Align));
+
+    var P: usize = Ptr;
+    const A: usize = Align;
+
+    // Same as (P % A) but faster as 'A' is a power of two
+    const Modulo: usize = P & (A - 1);
+
+    if (Modulo != 0)
+    {
+        P -= Modulo;
+    }
+
+    return (P);
+}
+
+fn AlignForward(Ptr: usize, Align: usize) usize
+{
+    std.debug.assert(IsPowerOfTwo(Align));
+
+    var P: usize = Ptr;
+    const A: usize = Align;
+
+    // Same as (P % A) but faster as 'A' is a power of two
+    const Modulo: usize = P & (A - 1);
+
+    if (Modulo != 0)
+    {
+        P += A - Modulo;
+    }
+
+    return (P);
+}
+
+fn SlabInitAlign(A: ?*slab_allocator, S: ?*slab, Size: usize, Align: usize,
+    IsMetaSlab: bool) void
+{
+    var PageBegin: usize = undefined;
+    if (IsMetaSlab)
+    {
+        // Forward align 'Offset' to the specified alignment
+        var CurrentPtr: usize = @intCast(usize, @ptrToInt(A.?.Buf)) + A.?.LeftOffset;
+        var Offset: usize = AlignForward(CurrentPtr, Align);
+        Offset -= @intCast(usize, @ptrToInt(A.?.Buf)); // Change to relative offset
+        if (Offset + std.mem.page_size <= A.?.RightOffset)
+        {
+            PageBegin = @intCast(usize, @ptrToInt(A.?.Buf)) + Offset;
+            A.?.LeftOffset = Offset + std.mem.page_size;
+        }
+        else
+        {
+            unreachable; // out of mem
+        }
+    }
+    else
+    {
+        // Backward align 'Offset' to the specified alignment
+        var CurrentPtr: usize = @intCast(usize, @ptrToInt(A.?.Buf)) + A.?.RightOffset;
+        var Offset: usize = AlignBackward(CurrentPtr, Align);
+        Offset -= @intCast(usize, @ptrToInt(A.?.Buf)); // Change to relative offset
+        if (Offset - std.mem.page_size > A.?.LeftOffset)
+        {
+            PageBegin = @intCast(usize, @ptrToInt(A.?.Buf)) + Offset - std.mem.page_size;
+            A.?.RightOffset = Offset - std.mem.page_size;
+        }
+        else
+        {
+            unreachable; // out of mem
+        }
+    }
+
+    for (@intToPtr([*]u8, PageBegin)[0..std.mem.page_size]) |*Byte| Byte.* = 0;
+
+    S.?.NextSlab = null;
+    S.?.Size = Size;
+    S.?.SlabStart = PageBegin;
+
+    // TODO(cjb): Assert std.mem.page_size divides Size evenly
+    var NumEntries: usize = (std.mem.page_size / Size);
+    S.?.FreeList = @intToPtr(?*slab_entry, PageBegin + (NumEntries - 1) * Size); //@ptrCast(?*slab_entry, @alignCast(@alignOf(slab_entry), Ptr));
+    var Current: ?*slab_entry = S.?.FreeList;
+
+    std.debug.assert(NumEntries >= 4);
+    var SlabEntryIndex: isize = @intCast(isize, NumEntries) - 1;
+    while (SlabEntryIndex >= 0) : (SlabEntryIndex -= 1)
+    {
+        Current.?.Next = @intToPtr(?*slab_entry, S.?.SlabStart +
+                                     @intCast(usize, SlabEntryIndex) * Size);
+        Current = Current.?.Next;
+    }
+}
+
+fn SlabInit(A: ?*slab_allocator, S: ?*slab, Size: usize, IsMetaSlab: bool) void {
+    return SlabInitAlign(A, S, Size, 2*@sizeOf(?*anyopaque), IsMetaSlab);
+}
+
+fn SlabAlloc(S: ?*slab, Size: usize, NewLoc: *usize) bool
+{
+    var Result: bool = true;
+    if ((S.?.Size != Size) or (S.?.FreeList == null))
+    {
+        Result = false;
+    }
+    else
+    {
+        NewLoc.* = @intCast(usize, @ptrToInt(S.?.FreeList));
+        S.?.FreeList = S.?.FreeList.?.Next;
+    }
+    return (Result);
+}
+
+fn SlabFree(S: ?*slab, Location: usize) bool {
+    var Result: bool = true;
+    if ((Location < S.?.SlabStart) or (Location >= (S.?.SlabStart + std.mem.page_size)))
+    {
+        Result = false;
+    }
+    else
+    {
+        var NewEntry: *slab_entry = @intToPtr(*slab_entry, Location);
+        NewEntry.*.Next = S.?.FreeList;
+        S.?.FreeList = NewEntry;
+    }
+    return Result;
+}
+
+fn SlabAllocMeta(A: ?*slab_allocator) void
+{
+    var SlabMetaData: slab = undefined;
+    SlabInit(A, &SlabMetaData, @sizeOf(slab), true);
+    var SlabLoc: usize = undefined;
+    var DidAlloc: bool = SlabAlloc(&SlabMetaData, @sizeOf(slab), &SlabLoc);
+    std.debug.assert(DidAlloc);
+
+    var NewSlabMeta: ?*slab = @intToPtr(?*slab, SlabLoc);
+    NewSlabMeta.?.* = SlabMetaData;
+    A.?.MetaSlab = NewSlabMeta;
+}
+
+pub export fn SlabAllocatorInit(A: ?*slab_allocator, BackingBuffer: ?[*]u8,
+    BackingBufferLength: usize) void
+{
+    A.?.SlabList = null;
+    A.?.Buf = BackingBuffer;
+    A.?.BufLen = BackingBufferLength;
+    A.?.LeftOffset = 0;
+    A.?.RightOffset = BackingBufferLength;
+    SlabAllocMeta(A);
+}
+// TODO(cjb): Don't be stupid, when allocating multiple blocks from a given slab, make sure the
+// slabs are contiguous in memory.
+pub export fn SlabAllocatorAlloc(A: ?*slab_allocator, RequestedSize: usize) ?*anyopaque {
+    var GoodBucketShift: usize = 5;
+    while ((RequestedSize > std.math.pow(usize, 2, GoodBucketShift)) and
+           (GoodBucketShift < 10))
+    {
+        GoodBucketShift += 1;
+    }
+
+    var BucketSize: usize = std.math.pow(usize, 2, GoodBucketShift);
+    var nRequiredSlabAllocs: usize = 1;
+    if (RequestedSize > BucketSize)
+    {
+        nRequiredSlabAllocs = ((RequestedSize / BucketSize) +
+                               (RequestedSize & (BucketSize - 1)));
+    }
+    var BaseLoc: usize = undefined;
+    var SlabAllocCount: usize = 0; // This resets if we fail allocation
+    while (true)
+    {
+        var Slab: ?*slab = A.?.SlabList;
+        while (Slab != null) : (Slab = Slab.?.NextSlab)
+        {
+            while (SlabAllocCount < nRequiredSlabAllocs)
+            {
+                var Tmp: usize = undefined;
+                if (SlabAlloc(Slab, BucketSize, &Tmp))
+                {
+                    // Assert contigous block allocations from baseloc
+                    std.debug.assert((SlabAllocCount == 0) or
+                                     (Tmp + (1 * BucketSize)) == BaseLoc);
+                    BaseLoc = Tmp;
+                    if (SlabAllocCount + 1 == nRequiredSlabAllocs)
+                    {
+                        return @intToPtr(?*anyopaque, BaseLoc);
+                    }
+                    SlabAllocCount += 1;
+                }
+                else // Slab allocation fail
+                {
+                    break;
+                }
+            }
+        }
+        var SlabLoc: usize = undefined;
+        var DidAlloc: bool = SlabAlloc(A.?.MetaSlab, @sizeOf(slab), &SlabLoc);
+        if (!DidAlloc)
+        {
+            SlabAllocMeta(A);
+            _ = SlabAlloc(A.?.MetaSlab, @sizeOf(slab), &SlabLoc);
+        }
+        var NewSlab: ?*slab = @intToPtr(?*slab, SlabLoc);
+        SlabInit(A, NewSlab, BucketSize, false);
+
+        NewSlab.?.NextSlab = A.?.SlabList;
+        A.?.SlabList = NewSlab;
+    }
+}
+
+//pub export fn SlabAllocatorFree(arg_A: [*c]slab_allocator, arg_Ptr: ?*anyopaque) void {
+//    var A = arg_A;
+//    var Ptr = arg_Ptr;
+//    if (!(Ptr != null)) {
+//        return;
+//    }
+//    var Loc: usize = @intCast(usize, @ptrToInt(Ptr));
+//    {
+//        var Slab: [*c]slab = A.*.SlabList;
+//        while (Slab != @ptrCast([*c]slab, @alignCast(@import("std").meta.alignment(slab), @intToPtr(?*anyopaque, @as(c_int, 0))))) : (Slab = Slab.*.NextSlab) {
+//            if (SlabFree(Slab, Loc)) {
+//                return;
+//            }
+//        }
+//    }
+//}
+
 const c = @cImport({
     @cInclude("hs.h");
-    @cInclude("stdio.h");
 });
 
-const job_posting_classifier = extern struct {
+const jpc = extern struct {
     Database: ?*c.hs_database_t,
     Scratch: ?*c.hs_scratch_t,
 };
@@ -40,7 +301,7 @@ fn HSSuccessOrErr(Writer: std.fs.File.Writer, HSReturnCode: c_int) !void {
 //const jpc_free = *const fn(Ptr: ?*anyopaque) void;
 
 // TODO(cjb): pass me acutal allocator...
-export fn JPCInit(JPC: ?*job_posting_classifier, JPCFixedBuffer: ?*anyopaque, JPCFixedBufferSize: usize,
+export fn JPCInit(JPC: ?*jpc, JPCFixedBuffer: ?*anyopaque, JPCFixedBufferSize: usize,
     ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
 {
     const Writer = std.io.getStdErr().writer();
@@ -130,7 +391,7 @@ fn EventHandler(id: c_uint, from: c_ulonglong, to: c_ulonglong, flags: c_uint, C
     return 0;
 }
 
-export fn JPCExtract(JPC: ?*job_posting_classifier, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C)
+export fn JPCExtract(JPC: ?*jpc, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C)
     c_int
 {
     _ = JPC;
@@ -146,7 +407,7 @@ export fn JPCExtract(JPC: ?*job_posting_classifier, Text: ?[*]u8, nTextBytes: c_
     return JPC_SUCCESS;
 }
 
-export fn JPCDeinit(JPC: ?*job_posting_classifier) callconv(.C) c_int {
+export fn JPCDeinit(JPC: ?*jpc) callconv(.C) c_int {
     _ = c.hs_free_scratch(JPC.?.Scratch);
 
     return JPC_SUCCESS;
