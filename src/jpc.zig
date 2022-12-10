@@ -1,11 +1,5 @@
 const std = @import("std");
 
-//TODO(cjb):
-// - SlabAllocatorInit store a ref to the allocator so it doesn't need to be passed to alloc and
-// free?
-// - Some sort of set alloactor function/interface for jpc
-// - How does jpc handle allocation without setting an allocator?
-
 pub const slab_entry = extern struct
 {
     Next: ?*slab_entry,
@@ -16,7 +10,7 @@ pub const slab = extern struct
     NextSlab: ?*slab,
     FreeList: ?*slab_entry,
     SlabStart: usize,
-    Size: usize,
+    Size: u16,
 };
 
 pub const slab_allocator = extern struct
@@ -28,6 +22,8 @@ pub const slab_allocator = extern struct
     SlabList: ?*slab,
     MetaSlab: ?*slab,
 };
+
+pub var GSA: slab_allocator = undefined;
 
 fn IsPowerOfTwo(X: usize) bool
 {
@@ -70,20 +66,20 @@ fn AlignForward(Ptr: usize, Align: usize) usize
     return (P);
 }
 
-fn SlabInitAlign(A: ?*slab_allocator, S: ?*slab, Size: usize, Align: usize,
+fn SlabInitAlign(A: *slab_allocator, S: ?*slab, Size: u16, Align: usize,
     IsMetaSlab: bool) void
 {
     var PageBegin: usize = undefined;
     if (IsMetaSlab)
     {
         // Forward align 'Offset' to the specified alignment
-        var CurrentPtr: usize = @intCast(usize, @ptrToInt(A.?.Buf)) + A.?.LeftOffset;
+        var CurrentPtr: usize = @intCast(usize, @ptrToInt(A.*.Buf)) + A.*.LeftOffset;
         var Offset: usize = AlignForward(CurrentPtr, Align);
-        Offset -= @intCast(usize, @ptrToInt(A.?.Buf)); // Change to relative offset
-        if (Offset + std.mem.page_size <= A.?.RightOffset)
+        Offset -= @intCast(usize, @ptrToInt(A.*.Buf)); // Change to relative offset
+        if (Offset + std.mem.page_size <= A.*.RightOffset)
         {
-            PageBegin = @intCast(usize, @ptrToInt(A.?.Buf)) + Offset;
-            A.?.LeftOffset = Offset + std.mem.page_size;
+            PageBegin = @intCast(usize, @ptrToInt(A.*.Buf)) + Offset;
+            A.*.LeftOffset = Offset + std.mem.page_size;
         }
         else
         {
@@ -93,13 +89,13 @@ fn SlabInitAlign(A: ?*slab_allocator, S: ?*slab, Size: usize, Align: usize,
     else
     {
         // Backward align 'Offset' to the specified alignment
-        var CurrentPtr: usize = @intCast(usize, @ptrToInt(A.?.Buf)) + A.?.RightOffset;
+        var CurrentPtr: usize = @intCast(usize, @ptrToInt(A.*.Buf)) + A.*.RightOffset;
         var Offset: usize = AlignBackward(CurrentPtr, Align);
-        Offset -= @intCast(usize, @ptrToInt(A.?.Buf)); // Change to relative offset
-        if (Offset - std.mem.page_size > A.?.LeftOffset)
+        Offset -= @intCast(usize, @ptrToInt(A.*.Buf)); // Change to relative offset
+        if (Offset - std.mem.page_size > A.*.LeftOffset)
         {
-            PageBegin = @intCast(usize, @ptrToInt(A.?.Buf)) + Offset - std.mem.page_size;
-            A.?.RightOffset = Offset - std.mem.page_size;
+            PageBegin = @intCast(usize, @ptrToInt(A.*.Buf)) + Offset - std.mem.page_size;
+            A.*.RightOffset = Offset - std.mem.page_size;
         }
         else
         {
@@ -128,8 +124,8 @@ fn SlabInitAlign(A: ?*slab_allocator, S: ?*slab, Size: usize, Align: usize,
     }
 }
 
-fn SlabInit(A: ?*slab_allocator, S: ?*slab, Size: usize, IsMetaSlab: bool) void {
-    return SlabInitAlign(A, S, Size, 2*@sizeOf(?*anyopaque), IsMetaSlab);
+fn SlabInit(A: *slab_allocator, S: ?*slab, Size: u16, IsMetaSlab: bool) void {
+    return SlabInitAlign(A, S, Size, @sizeOf(?*anyopaque), IsMetaSlab);
 }
 
 fn SlabAlloc(S: ?*slab, Size: usize, NewLoc: *usize) bool
@@ -147,22 +143,64 @@ fn SlabAlloc(S: ?*slab, Size: usize, NewLoc: *usize) bool
     return (Result);
 }
 
-fn SlabFree(S: ?*slab, Location: usize) bool {
+fn SlabFree(S: ?*slab, Location: usize, Size: usize) bool
+{
     var Result: bool = true;
     if ((Location < S.?.SlabStart) or (Location >= (S.?.SlabStart + std.mem.page_size)))
     {
         Result = false;
     }
-    else
+    else // Are at least within the same slab
     {
-        var NewEntry: *slab_entry = @intToPtr(*slab_entry, Location);
-        NewEntry.*.Next = S.?.FreeList;
-        S.?.FreeList = NewEntry;
+        const BlockSize = @intCast(usize, S.?.Size);
+
+        // TODO(cjb): Better way to do this...
+        const BlockCountF = @intToFloat(f32, Size) / @intToFloat(f32, BlockSize);
+        var BlockCount = Size / BlockSize;
+        if (BlockCountF - @intToFloat(f32, BlockCount) > 0)
+        {
+            BlockCount += 1;
+        }
+
+        // Compute starting slab's number of used block's
+        const BlocksPerSlab: usize = std.mem.page_size / BlockSize;
+        const InitialSlabBlocksUsed = BlocksPerSlab - (Location - S.?.SlabStart) / BlockSize;
+
+        var CurrentSlab = S;
+        var nBlocksFreed: usize = 0;
+        while(nBlocksFreed < BlockCount) : (nBlocksFreed += 1)
+        {
+            // Did cross a page boundry?
+            const BlockLoc: usize = Location + nBlocksFreed * BlockSize;
+            if (BlockLoc >= CurrentSlab.?.SlabStart + std.mem.page_size)
+            {
+                CurrentSlab = CurrentSlab.?.NextSlab;
+                std.debug.assert(CurrentSlab != null);
+            }
+
+            // Map nBlocksFreed => TargetBlockIndex
+            var TargetBlockIndex: usize = undefined;
+            if (nBlocksFreed < InitialSlabBlocksUsed)
+            {
+                TargetBlockIndex = (BlocksPerSlab - 1) -
+                                    (nBlocksFreed % BlocksPerSlab);
+            }
+            else
+            {
+                TargetBlockIndex = (BlocksPerSlab - 1) -
+                                    ((nBlocksFreed - InitialSlabBlocksUsed) % BlocksPerSlab);
+            }
+
+            var NewEntry: *slab_entry = @intToPtr(*slab_entry,
+                CurrentSlab.?.SlabStart + TargetBlockIndex * BlockSize);
+            NewEntry.*.Next = CurrentSlab.?.FreeList;
+            CurrentSlab.?.FreeList = NewEntry;
+        }
     }
     return Result;
 }
 
-fn SlabAllocMeta(A: ?*slab_allocator) void
+fn SlabAllocMeta(A: *slab_allocator) void
 {
     var SlabMetaData: slab = undefined;
     SlabInit(A, &SlabMetaData, @sizeOf(slab), true);
@@ -172,95 +210,111 @@ fn SlabAllocMeta(A: ?*slab_allocator) void
 
     var NewSlabMeta: ?*slab = @intToPtr(?*slab, SlabLoc);
     NewSlabMeta.?.* = SlabMetaData;
-    A.?.MetaSlab = NewSlabMeta;
+    A.*.MetaSlab = NewSlabMeta;
 }
 
-pub export fn SlabAllocatorInit(A: ?*slab_allocator, BackingBuffer: ?[*]u8,
-    BackingBufferLength: usize) void
+pub export fn JPCAInit(BackingBuffer: ?[*]u8, BackingBufferLength: usize) void
 {
-    A.?.SlabList = null;
-    A.?.Buf = BackingBuffer;
-    A.?.BufLen = BackingBufferLength;
-    A.?.LeftOffset = 0;
-    A.?.RightOffset = BackingBufferLength;
-    SlabAllocMeta(A);
+    GSA.SlabList = null;
+    GSA.Buf = BackingBuffer;
+    GSA.BufLen = BackingBufferLength;
+    GSA.LeftOffset = 0;
+    GSA.RightOffset = BackingBufferLength;
+    SlabAllocMeta(&GSA);
 }
-// TODO(cjb): Don't be stupid, when allocating multiple blocks from a given slab, make sure the
-// slabs are contiguous in memory.
-pub export fn SlabAllocatorAlloc(A: ?*slab_allocator, RequestedSize: usize) ?*anyopaque {
-    var GoodBucketShift: usize = 5;
+
+pub export fn JPCADeinit() void
+{
+    GSA.SlabList = null;
+    GSA.Buf = null;
+    GSA.BufLen = 0;
+    GSA.LeftOffset = 0;
+    GSA.RightOffset = 0;
+    GSA.MetaSlab = null;
+}
+
+pub export fn JPCAAlloc(RequestedSize: usize) callconv(.C) ?*anyopaque
+{
+    var A: *slab_allocator = &GSA;
+    var GoodBucketShift: u8 = 5;
     while ((RequestedSize > std.math.pow(usize, 2, GoodBucketShift)) and
            (GoodBucketShift < 10))
     {
         GoodBucketShift += 1;
     }
 
-    var BucketSize: usize = std.math.pow(usize, 2, GoodBucketShift);
-    var nRequiredSlabAllocs: usize = 1;
-    if (RequestedSize > BucketSize)
+    var BlockSize: u16 = std.math.pow(u16, 2, GoodBucketShift);
+
+    // TODO(cjb): Better way to do this...
+    const BlockCountF = @intToFloat(f32, RequestedSize) / @intToFloat(f32, BlockSize);
+    var BlockCount = RequestedSize / BlockSize;
+    if (BlockCountF - @intToFloat(f32, BlockCount) > 0)
     {
-        nRequiredSlabAllocs = ((RequestedSize / BucketSize) +
-                               (RequestedSize & (BucketSize - 1)));
+        BlockCount += 1;
     }
     var BaseLoc: usize = undefined;
-    var SlabAllocCount: usize = 0; // This resets if we fail allocation
+    var ContigAllocCount: usize = 0;
     while (true)
     {
-        var Slab: ?*slab = A.?.SlabList;
+        var Slab: ?*slab = A.*.SlabList;
         while (Slab != null) : (Slab = Slab.?.NextSlab)
         {
-            while (SlabAllocCount < nRequiredSlabAllocs)
+            while (ContigAllocCount < BlockCount)
             {
                 var Tmp: usize = undefined;
-                if (SlabAlloc(Slab, BucketSize, &Tmp))
+                if (SlabAlloc(Slab, BlockSize, &Tmp))
                 {
                     // Assert contigous block allocations from baseloc
-                    std.debug.assert((SlabAllocCount == 0) or
-                                     (Tmp + (1 * BucketSize)) == BaseLoc);
+                    std.debug.assert((ContigAllocCount == 0) or
+                                     (Tmp + (1 * BlockSize)) == BaseLoc);
                     BaseLoc = Tmp;
-                    if (SlabAllocCount + 1 == nRequiredSlabAllocs)
+                    if (ContigAllocCount + 1 == BlockCount)
                     {
+                        // Return start of last block allocation
                         return @intToPtr(?*anyopaque, BaseLoc);
                     }
-                    SlabAllocCount += 1;
+                    ContigAllocCount += 1;
                 }
                 else // Slab allocation fail
                 {
+                    // FIXME(cjb): Handle alloc'd block restoration and resetting ContigAllocCount
                     break;
                 }
             }
         }
         var SlabLoc: usize = undefined;
-        var DidAlloc: bool = SlabAlloc(A.?.MetaSlab, @sizeOf(slab), &SlabLoc);
+        var DidAlloc: bool = SlabAlloc(A.*.MetaSlab, @sizeOf(slab), &SlabLoc);
         if (!DidAlloc)
         {
             SlabAllocMeta(A);
-            _ = SlabAlloc(A.?.MetaSlab, @sizeOf(slab), &SlabLoc);
+            _ = SlabAlloc(A.*.MetaSlab, @sizeOf(slab), &SlabLoc);
         }
         var NewSlab: ?*slab = @intToPtr(?*slab, SlabLoc);
-        SlabInit(A, NewSlab, BucketSize, false);
+        SlabInit(A, NewSlab, BlockSize, false);
 
-        NewSlab.?.NextSlab = A.?.SlabList;
-        A.?.SlabList = NewSlab;
+        NewSlab.?.NextSlab = A.*.SlabList;
+        A.*.SlabList = NewSlab;
     }
 }
 
-//pub export fn SlabAllocatorFree(arg_A: [*c]slab_allocator, arg_Ptr: ?*anyopaque) void {
-//    var A = arg_A;
-//    var Ptr = arg_Ptr;
-//    if (!(Ptr != null)) {
-//        return;
-//    }
-//    var Loc: usize = @intCast(usize, @ptrToInt(Ptr));
-//    {
-//        var Slab: [*c]slab = A.*.SlabList;
-//        while (Slab != @ptrCast([*c]slab, @alignCast(@import("std").meta.alignment(slab), @intToPtr(?*anyopaque, @as(c_int, 0))))) : (Slab = Slab.*.NextSlab) {
-//            if (SlabFree(Slab, Loc)) {
-//                return;
-//            }
-//        }
-//    }
-//}
+pub fn JPCAFree(Ptr: ?*anyopaque, Size: usize) void
+{
+    var A = &GSA;
+    if (Ptr == null)
+    {
+        return;
+    }
+    var Loc: usize = @intCast(usize, @ptrToInt(Ptr));
+
+    var Slab: ?*slab = A.*.SlabList;
+    while (Slab != null) : (Slab = Slab.?.NextSlab)
+    {
+        if (SlabFree(Slab, Loc, Size))
+        {
+            return;
+        }
+    }
+}
 
 const c = @cImport({
     @cInclude("hs.h");
@@ -297,18 +351,18 @@ fn HSSuccessOrErr(Writer: std.fs.File.Writer, HSReturnCode: c_int) !void {
     return error.Error;
 }
 
-//const jpc_alloc = *const fn(Size: usize) ?*anyopaque;
-//const jpc_free = *const fn(Ptr: ?*anyopaque) void;
-
-// TODO(cjb): pass me acutal allocator...
-export fn JPCInit(JPC: ?*jpc, JPCFixedBuffer: ?*anyopaque, JPCFixedBufferSize: usize,
+// Pretend slab allocator is jpc's allocator api
+// TODO(cjb): pass me acutal allocator...???
+export fn JPCInit(JPC: ?*jpc, BackingBuffer: ?[*]u8, BackingBufferSize: usize,
     ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
 {
+    // Get stderr writer
     const Writer = std.io.getStdErr().writer();
 
-    var ByteBuffer = @ptrCast([*]u8, JPCFixedBuffer.?);
-    var FBA = std.heap.FixedBufferAllocator.init(ByteBuffer[0..JPCFixedBufferSize]);
+    // Initialize slab allocator
+    JPCAInit(BackingBuffer, BackingBufferSize);
 
+    // Open artifact file
     var PathLen: usize = 0;
     while (ArtifactPathZ.?[PathLen] != 0) { PathLen += 1; }
     const ArtifactFile = std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{}) catch |Err|
@@ -321,7 +375,7 @@ export fn JPCInit(JPC: ?*jpc, JPCFixedBuffer: ?*anyopaque, JPCFixedBufferSize: u
         unreachable;
     };
 
-    const FileStat = ArtifactFile.stat() catch |Err|
+    const ArtifactStat = ArtifactFile.stat() catch |Err|
     {
         switch(Err)
         {
@@ -330,20 +384,20 @@ export fn JPCInit(JPC: ?*jpc, JPCFixedBuffer: ?*anyopaque, JPCFixedBufferSize: u
         unreachable;
     };
 
-    const FSize = FileStat.size;
-    const SerializedBytes = ArtifactFile.reader().readAllAlloc(FBA.allocator(), FSize) catch |Err|
+    var SerializedBytes: []u8 = @ptrCast([*]u8,
+        JPCAAlloc(ArtifactStat.size).?)[0 .. ArtifactStat.size];
+    const nBytesRead = ArtifactFile.reader().readAll(SerializedBytes) catch |Err|
     {
         switch(Err)
         {
-            error.OutOfMemory => return JPC_NOMEM,
             else => Writer.print("{}\n", .{Err}) catch {},
         }
         unreachable;
     };
-    defer FBA.allocator().free(SerializedBytes);
+    std.debug.assert(nBytesRead == ArtifactStat.size);
+    defer JPCAFree(SerializedBytes.ptr, SerializedBytes.len);
 
     // TODO(cjb): hs_set_misc_allocator()
-
     var DBSize: usize = undefined;
     HSSuccessOrErr(Writer, c.hs_serialized_database_size(SerializedBytes.ptr, SerializedBytes.len,
             &DBSize)) catch
@@ -351,15 +405,7 @@ export fn JPCInit(JPC: ?*jpc, JPCFixedBuffer: ?*anyopaque, JPCFixedBufferSize: u
         return JPC_UNKNOWN_ERROR;
     };
 
-    var DBMem = FBA.allocator().alignedAlloc(u8, 8, DBSize) catch |Err|
-    {
-        switch(Err)
-        {
-            error.OutOfMemory => return JPC_NOMEM,
-            else => Writer.print("{}\n", .{Err}) catch {},
-        }
-        unreachable;
-    };
+    var DBMem = JPCAAlloc(DBSize); // TODO(cjb): Handle alloc fail
 
     JPC.?.Database = @ptrCast(*c.hs_database_t, DBMem);
     HSSuccessOrErr(Writer, c.hs_deserialize_database_at(SerializedBytes.ptr, SerializedBytes.len,
@@ -378,8 +424,8 @@ export fn JPCInit(JPC: ?*jpc, JPCFixedBuffer: ?*anyopaque, JPCFixedBufferSize: u
     return JPC_SUCCESS;
 }
 
-fn EventHandler(id: c_uint, from: c_ulonglong, to: c_ulonglong, flags: c_uint, Ctx: ?*anyopaque)
-    callconv(.C) c_int
+fn EventHandler(id: c_uint, from: c_ulonglong, to: c_ulonglong, flags: c_uint,
+    Ctx: ?*anyopaque) callconv(.C) c_int
 {
     _ = id;
     _ = flags;
@@ -391,10 +437,8 @@ fn EventHandler(id: c_uint, from: c_ulonglong, to: c_ulonglong, flags: c_uint, C
     return 0;
 }
 
-export fn JPCExtract(JPC: ?*jpc, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C)
-    c_int
+export fn JPCExtract(JPC: ?*jpc, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C) c_int
 {
-    _ = JPC;
     const Writer = std.io.getStdErr().writer();
 
     if (c.hs_scan(JPC.?.Database, Text, nTextBytes, 0, JPC.?.Scratch, EventHandler, Text) !=
