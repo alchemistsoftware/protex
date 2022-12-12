@@ -83,6 +83,7 @@ fn SlabInitAlign(A: *slab_allocator, S: ?*slab, Size: u16, Align: usize,
         }
         else
         {
+            std.debug.print("Out of mem\n", .{}); // FIXME(cjb)
             unreachable; // out of mem
         }
     }
@@ -99,6 +100,7 @@ fn SlabInitAlign(A: *slab_allocator, S: ?*slab, Size: u16, Align: usize,
         }
         else
         {
+            std.debug.print("Out of mem\n", .{}); // FIXME(cjb)
             unreachable; // out of mem
         }
     }
@@ -128,23 +130,33 @@ fn SlabInit(A: *slab_allocator, S: ?*slab, Size: u16, IsMetaSlab: bool) void {
     return SlabInitAlign(A, S, Size, @sizeOf(?*anyopaque), IsMetaSlab);
 }
 
-// ================================================================================================
-// Choose slab from slablist capable of handling n contigious block allocations.
-//
-// Walk slab list performing "dry slaballoc's" to determine if a slab could have handled an
-// allocation. If dry allocation succeded than run checks on that block's position in memory. If
-// The position is ok than increment allocation count, if this is the last required allocation
-// than return the slab in use when allocation count was 0. If the block didn't pass the position
-// checks than the allocation count is reset and the current slab at this point is recorded. Upon
-// dry allocation fail continue to the next slab. Once the slab list is exhausted return null.
-//
-// - Paramaters:
-//   - S: optional slab ptr to begin search from
-//   - Size: block size of the allocation
-//   - nBlocks: number of blocks required for this allocation
-//
-// - Returns: optional ptr to slab on success otherwise null.
+fn SlabBlocksBetween(StartBlockLoc: usize, EndBlockLoc: usize, BlockSize: usize) usize
+{
+    var BlocksBetween: usize = 0;
+    var CurrentBlockLoc: usize = EndBlockLoc;
+    while(CurrentBlockLoc >= StartBlockLoc) : (BlocksBetween += 1)
+    {
+        CurrentBlockLoc -= BlockSize;
+    }
 
+    return BlocksBetween;
+}
+
+/// Choose slab from slablist capable of handling n contigious block allocations.
+///
+/// Walk slab list performing "dry slaballoc's" to determine if a slab could have handled an
+/// allocation. If dry allocation succeded than run checks on that block's position in memory. If
+/// The position is ok than increment allocation count, if this is the last required allocation
+/// than return the slab in use when allocation count was 0. If the block didn't pass the position
+/// checks than the allocation count is reset and the current slab at this point is recorded. Upon
+/// dry allocation fail continue to the next slab. Once the slab list is exhausted return null.
+///
+/// - Paramaters:
+///   - S: optional slab ptr to begin search from
+///   - Size: block size of the allocation
+///   - nBlocks: number of blocks required for this allocation
+///
+/// - Returns: optional ptr to slab on success otherwise null.
 fn FindStartSlabToAllocBlocks(S: ?*slab, Size: usize, nBlocks: usize) ?*slab
 {
     var CurrentSlab: ?*slab = S;
@@ -168,11 +180,11 @@ fn FindStartSlabToAllocBlocks(S: ?*slab, Size: usize, nBlocks: usize) ?*slab
             // Verify NextBlockLoc position in memory
             if ((CurrentBlockLoc == 0) or                     // Initial block loc assignment
                 (CurrentBlockLoc - Size == NextBlockLoc) or   // Contiguous allocation within slab
-                (NextBlockLoc <
-                 CurrentSlab.?.SlabStart + std.mem.page_size) // Contiguous slab jump
-                // FIXME(cjb) enforce avail blocks from  CurrentBlockLog <=> NextBlockLoc
+                (SlabBlocksBetween(CurrentBlockLoc, NextBlockLoc, Size) <
+                 (std.mem.page_size / Size) * 2))             // Next page
             {
                 AllocCount += 1;
+
                 if (AllocCount >= nBlocks) // Have enough blocks yet?
                 {
                     return TargetSlab;
@@ -183,8 +195,14 @@ fn FindStartSlabToAllocBlocks(S: ?*slab, Size: usize, nBlocks: usize) ?*slab
                 AllocCount = 0;
                 TargetSlab = CurrentSlab;
             }
+
             CurrentBlockLoc = NextBlockLoc;
+            if (AllocCount == (nBlocks % (std.mem.page_size / Size)))
+            {
+                break;
+            }
         }
+
     }
     return null;
 }
@@ -201,9 +219,22 @@ fn SlabAllocNBlocks(S: ?*slab, Size: usize, NewLoc: *usize, nBlocks: usize) bool
     var AllocCount: usize = 0;
     while (AllocCount < nBlocks)
     {
-        if (SlabAlloc(CurrentSlab, Size, NewLoc))
+        if (CurrentSlab.?.FreeList != null)
         {
             AllocCount += 1;
+            if (AllocCount <= (nBlocks % (std.mem.page_size / Size)))
+            {
+                // Record first block
+                if (AllocCount == 1)
+                {
+                    NewLoc.* = @intCast(usize, @ptrToInt(CurrentSlab.?.FreeList));
+                }
+            }
+            CurrentSlab.?.FreeList = CurrentSlab.?.FreeList.?.Next;
+            if (AllocCount == (nBlocks % (std.mem.page_size / Size)))
+            {
+                CurrentSlab = CurrentSlab.?.NextSlab;
+            }
         }
         else
         {
@@ -288,7 +319,7 @@ fn SlabFree(S: ?*slab, Location: usize, Size: usize) bool
     return Result;
 }
 
-fn SlabInitMeta(A: *slab_allocator) void
+fn SlabAllocMeta(A: *slab_allocator) void
 {
     var SlabMetaData: slab = undefined;
     SlabInit(A, &SlabMetaData, @sizeOf(slab), true);
@@ -355,6 +386,7 @@ pub export fn JPCAAlloc(RequestedSize: usize) callconv(.C) ?*anyopaque
             SlabAllocMeta(A);
             if (!SlabAlloc(A.*.MetaSlab, @sizeOf(slab), &SlabLoc))
             {
+                std.debug.print("Failed to alloc metaslab\n", .{}); // FIXME(cjb)
                 unreachable;
             }
         }
