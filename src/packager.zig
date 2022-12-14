@@ -56,13 +56,13 @@ pub fn main() !void {
         std.mem.copy(u8, PatternBuf, Data.?);
         PatternBuf[Data.?.len] = 0;
         PatternsZ[PatternIndex] = PatternBuf.ptr;
-        Flags[PatternIndex] = c.HS_FLAG_DOTALL | c.HS_FLAG_CASELESS | c.HS_FLAG_SOM_LEFTMOST;
+        Flags[PatternIndex] = c.HS_FLAG_DOTALL | c.HS_FLAG_CASELESS | c.HS_FLAG_SOM_LEFTMOST | c.HS_FLAG_UTF8;
         IDs[PatternIndex] = PatternIndex;
 
         Data = try PatternsFile.reader().readUntilDelimiterOrEofAlloc(ScratchFBA.allocator(), '\n', MaxRead);
     }
 
-    std.debug.print("Serializing Patterns: \n---------------------\n", .{});
+    std.debug.print("Serializing Patterns:\n", .{});
     for (PatternsZ) |Pat| {
         std.debug.print("{s}\n", .{Pat});
     }
@@ -74,29 +74,29 @@ pub fn main() !void {
         _ = c.hs_free_compile_error(CompileError);
         unreachable;
     }
+    std.debug.print("Pattern db compile success.\n", .{});
 
-    var Bytes: [*c]u8 = undefined;
-    var Length: usize = undefined;
-    if (c.hs_serialize_database(Database, &Bytes, &Length) != c.HS_SUCCESS) {
+    var SerializedDBBytes: [*c]u8 = undefined;
+    var nSerializedDBBytes: usize = undefined;
+    if (c.hs_serialize_database(Database, &SerializedDBBytes, &nSerializedDBBytes) != c.HS_SUCCESS) {
         unreachable;
     }
 
     var DeserializedSize: usize = undefined;
-    if (c.hs_serialized_database_size(Bytes, Length,
+    if (c.hs_serialized_database_size(SerializedDBBytes, nSerializedDBBytes,
             &DeserializedSize) != c.HS_SUCCESS)
     {
         unreachable;
     }
 
     var ArtifactHeader: gracie.gracie_artifact_header = undefined;
-    ArtifactHeader.SerializedDatabaseSize = Length;
-    ArtifactHeader.DeserializedDatabaseSize = DeserializedSize;
+    ArtifactHeader.DatabaseSize = DeserializedSize;
 
     const DatabaseFile = try std.fs.cwd().createFile("data/gracie.bin.0.0.1", .{});
     _ = try DatabaseFile.write(
         @ptrCast([*]u8, &ArtifactHeader)[0 .. @sizeOf(gracie.gracie_artifact_header)]);
-    const BytesWritten = try DatabaseFile.write(Bytes[0..Length]);
-    if (BytesWritten != Length) {
+    const BytesWritten = try DatabaseFile.write(SerializedDBBytes[0..nSerializedDBBytes]);
+    if (BytesWritten != nSerializedDBBytes) {
         unreachable;
     }
 }
