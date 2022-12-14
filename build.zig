@@ -5,7 +5,7 @@ pub fn build(B: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const Mode = B.standardReleaseOptions();
 
-    const Lib = B.addSharedLibrary("jpc", "src/jpc.zig", B.version(0, 0, 1));
+    const Lib = B.addSharedLibrary("gracie", "src/gracie.zig", B.version(0, 0, 1));
     Lib.setOutputDir("./lib");
     Lib.setBuildMode(Mode);
     Lib.addIncludeDir("/usr/include/hs/");
@@ -13,7 +13,7 @@ pub fn build(B: *std.build.Builder) void {
     Lib.linkLibC();
     Lib.install();
 
-    const LibTests = B.addTest("src/jpc.zig");
+    const LibTests = B.addTest("src/gracie.zig");
     LibTests.linkSystemLibrary("hs_runtime"); // TODO(cjb): runtime
     LibTests.addIncludeDir("/usr/include/hs/");
     LibTests.linkLibC();

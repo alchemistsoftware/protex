@@ -1,8 +1,8 @@
 const std = @import("std");
+const gracie = @import("gracie.zig");
 
 const c = @cImport({
     @cInclude("hs.h");
-    @cInclude("stdio.h");
 });
 
 pub fn main() !void {
@@ -81,7 +81,20 @@ pub fn main() !void {
         unreachable;
     }
 
-    const DatabaseFile = try std.fs.cwd().createFile("data/db.bin", .{});
+    var DeserializedSize: usize = undefined;
+    if (c.hs_serialized_database_size(Bytes, Length,
+            &DeserializedSize) != c.HS_SUCCESS)
+    {
+        unreachable;
+    }
+
+    var ArtifactHeader: gracie.gracie_artifact_header = undefined;
+    ArtifactHeader.SerializedDatabaseSize = Length;
+    ArtifactHeader.DeserializedDatabaseSize = DeserializedSize;
+
+    const DatabaseFile = try std.fs.cwd().createFile("data/gracie.bin.0.0.1", .{});
+    _ = try DatabaseFile.write(
+        @ptrCast([*]u8, &ArtifactHeader)[0 .. @sizeOf(gracie.gracie_artifact_header)]);
     const BytesWritten = try DatabaseFile.write(Bytes[0..Length]);
     if (BytesWritten != Length) {
         unreachable;

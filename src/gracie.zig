@@ -23,8 +23,6 @@ pub const slab_allocator = extern struct
     MetaSlab: ?*slab,
 };
 
-pub var GSA: slab_allocator = undefined;
-
 fn IsPowerOfTwo(X: usize) bool
 {
     return (X & (X - 1)) == 0;
@@ -207,7 +205,6 @@ fn FindStartSlabToAllocBlocks(S: ?*slab, Size: usize, nBlocks: usize) ?*slab
     return null;
 }
 
-
 fn SlabAllocNBlocks(S: ?*slab, Size: usize, NewLoc: *usize, nBlocks: usize) bool
 {
     var CurrentSlab: ?*slab = FindStartSlabToAllocBlocks(S, Size, nBlocks);
@@ -332,29 +329,31 @@ fn SlabAllocMeta(A: *slab_allocator) void
     A.*.MetaSlab = NewSlabMeta;
 }
 
-pub export fn JPCAInit(BackingBuffer: ?[*]u8, BackingBufferLength: usize) void
+fn GracieAInit(BackingBuffer: ?[*]u8, BackingBufferLength: usize) slab_allocator
 {
-    GSA.SlabList = null;
-    GSA.Buf = BackingBuffer;
-    GSA.BufLen = BackingBufferLength;
-    GSA.LeftOffset = 0;
-    GSA.RightOffset = BackingBufferLength;
-    SlabAllocMeta(&GSA);
+    var Allocator: slab_allocator = undefined;
+    Allocator.SlabList = null;
+    Allocator.Buf = BackingBuffer;
+    Allocator.BufLen = BackingBufferLength;
+    Allocator.LeftOffset = 0;
+    Allocator.RightOffset = BackingBufferLength;
+    SlabAllocMeta(&Allocator);
+
+    return Allocator;
 }
 
-pub export fn JPCADeinit() void
-{
-    GSA.SlabList = null;
-    GSA.Buf = null;
-    GSA.BufLen = 0;
-    GSA.LeftOffset = 0;
-    GSA.RightOffset = 0;
-    GSA.MetaSlab = null;
-}
+//pub export fn GracieADeinit() void
+//{
+//    GSA.SlabList = null;
+//    GSA.Buf = null;
+//    GSA.BufLen = 0;
+//    GSA.LeftOffset = 0;
+//    GSA.RightOffset = 0;
+//    GSA.MetaSlab = null;
+//}
 
-pub export fn JPCAAlloc(RequestedSize: usize) callconv(.C) ?*anyopaque
+pub export fn GracieAAlloc(A: *slab_allocator, RequestedSize: usize) callconv(.C) ?*anyopaque
 {
-    var A: *slab_allocator = &GSA;
     var GoodBucketShift: u8 = 5;
     while ((RequestedSize > std.math.pow(usize, 2, GoodBucketShift)) and
            (GoodBucketShift < 10))
@@ -398,9 +397,8 @@ pub export fn JPCAAlloc(RequestedSize: usize) callconv(.C) ?*anyopaque
     }
 }
 
-pub fn JPCAFree(Ptr: ?*anyopaque, Size: usize) void
+fn GracieAFree(A: *slab_allocator, Ptr: ?*anyopaque, Size: usize) void
 {
-    var A = &GSA;
     if (Ptr == null)
     {
         return;
@@ -421,108 +419,109 @@ const c = @cImport({
     @cInclude("hs.h");
 });
 
-const jpc = extern struct {
-    Database: ?*c.hs_database_t,
-    Scratch: ?*c.hs_scratch_t,
+pub const gracie_artifact_header = extern struct {
+    SerializedDatabaseSize: usize,
+    DeserializedDatabaseSize: usize,
 };
 
-pub const JPC_SUCCESS: c_int = 0; // Call was executed successfully
-pub const JPC_INVALID: c_int = -1; // Bad paramater was passed
-pub const JPC_UNKNOWN_ERROR: c_int = -2; // Unhandled internal error
-pub const JPC_NOMEM: c_int = -3; // A memory allocation failed
+pub const gracie = extern struct {
+    Database: ?*c.hs_database_t,
+    Scratch: ?*c.hs_scratch_t,
+    A: slab_allocator,
+};
 
-fn HSSuccessOrErr(Writer: std.fs.File.Writer, HSReturnCode: c_int) !void {
+pub const GRACIE_SUCCESS: c_int = 0;        // Call was executed successfully
+pub const GRACIE_INVALID: c_int = -1;       // Bad paramater was passed
+pub const GRACIE_UNKNOWN_ERROR: c_int = -2; // Unhandled internal error
+pub const GRACIE_NOMEM: c_int = -3;         // A memory allocation failed
+
+// TODO(cjb): Integrate this error set into GracieErrhandler.
+fn HSLogErrOnFail(HSReturnCode: c_int) !void {
     switch (HSReturnCode) {
         c.HS_SUCCESS => return,
-        c.HS_INVALID => Writer.print("HS_INVALID\n", .{}) catch {},
-        c.HS_NOMEM => Writer.print("HS_NOMEM\n", .{}) catch {},
-        c.HS_SCAN_TERMINATED => Writer.print("HS_SCAN_TERMINATED\n", .{}) catch {},
-        c.HS_COMPILER_ERROR => Writer.print("HS_COMPILER_ERROR\n", .{}) catch {},
-        c.HS_DB_VERSION_ERROR => Writer.print("HS_DB_VERSION_ERROR\n", .{}) catch {},
-        c.HS_DB_PLATFORM_ERROR => Writer.print("HS_DB_PLATFORM_ERROR\n", .{}) catch {},
-        c.HS_DB_MODE_ERROR => Writer.print("HS_DB_MODE_ERROR\n", .{}) catch {},
-        c.HS_BAD_ALIGN => Writer.print("HS_BAD_ALIGN\n", .{}) catch {},
-        c.HS_BAD_ALLOC => Writer.print("HS_BAD_ALLOC\n", .{}) catch {},
-        c.HS_SCRATCH_IN_USE => Writer.print("HS_SCRATCH_IN_USE\n", .{}) catch {},
-        c.HS_ARCH_ERROR => Writer.print("HS_ARCH_ERROR\n", .{}) catch {},
-        c.HS_INSUFFICIENT_SPACE => Writer.print("HS_INSUFFICIENT_SPACE\n", .{}) catch {},
-        c.HS_UNKNOWN_ERROR => Writer.print("HS_UNKNOWN_ERROR\n", .{}) catch {},
+        c.HS_INVALID => std.log.err("HS_INVALID\n", .{}),
+        c.HS_NOMEM => std.log.err("HS_NOMEM\n", .{}),
+        c.HS_SCAN_TERMINATED => std.log.err("HS_SCAN_TERMINATED\n", .{}),
+        c.HS_COMPILER_ERROR => std.log.err("HS_COMPILER_ERROR\n", .{}),
+        c.HS_DB_VERSION_ERROR => std.log.err("HS_DB_VERSION_ERROR\n", .{}),
+        c.HS_DB_PLATFORM_ERROR => std.log.err("HS_DB_PLATFORM_ERROR\n", .{}),
+        c.HS_DB_MODE_ERROR => std.log.err("HS_DB_MODE_ERROR\n", .{}),
+        c.HS_BAD_ALIGN => std.log.err("HS_BAD_ALIGN\n", .{}),
+        c.HS_BAD_ALLOC => std.log.err("HS_BAD_ALLOC\n", .{}),
+        c.HS_SCRATCH_IN_USE => std.log.err("HS_SCRATCH_IN_USE\n", .{}),
+        c.HS_ARCH_ERROR => std.log.err("HS_ARCH_ERROR\n", .{}),
+        c.HS_INSUFFICIENT_SPACE => std.log.err("HS_INSUFFICIENT_SPACE\n", .{}),
+        c.HS_UNKNOWN_ERROR => std.log.err("HS_UNKNOWN_ERROR\n", .{}),
         else => unreachable,
     }
     return error.Error;
 }
 
-// Pretend slab allocator is jpc's allocator api
-// TODO(cjb): pass me acutal allocator...???
-export fn JPCInit(JPC: ?*jpc, BackingBuffer: ?[*]u8, BackingBufferSize: usize,
-    ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
+fn GracieErrHandler(Err: anyerror) c_int
 {
-    // Get stderr writer
-    const Writer = std.io.getStdErr().writer();
+    std.log.err("{}", .{Err});
+    switch(Err)
+    {
+        error.OutOfMemory => return GRACIE_NOMEM,
+        error.FileNotFound => return GRACIE_INVALID,
+        error.Error => return GRACIE_UNKNOWN_ERROR,
+        else => unreachable,
+    }
+}
 
-    // Initialize slab allocator
-    JPCAInit(BackingBuffer, BackingBufferSize);
-
+export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
+{
     // Open artifact file
     var PathLen: usize = 0;
     while (ArtifactPathZ.?[PathLen] != 0) { PathLen += 1; }
     const ArtifactFile = std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{}) catch |Err|
-    {
-        switch (Err)
-        {
-            error.FileNotFound => return JPC_INVALID,
-            else => Writer.print("{}\n", .{Err}) catch {},
-        }
-        unreachable;
-    };
+        return GracieErrHandler(Err);
 
+    // File stat
     const ArtifactStat = ArtifactFile.stat() catch |Err|
-    {
-        switch(Err)
-        {
-            else => Writer.print("{}\n", .{Err}) catch {},
-        }
-        unreachable;
-    };
+        return GracieErrHandler(Err);
+    std.debug.assert(ArtifactStat.size > @sizeOf(gracie_artifact_header));
 
+    // Read artifact header
+    var ArtifactHeader: gracie_artifact_header = undefined;
+    const nHeaderBytesRead = ArtifactFile.read(
+        @ptrCast([*]u8, &ArtifactHeader)[0..@sizeOf(gracie_artifact_header)]) catch |Err|
+        return GracieErrHandler(Err);
+    std.debug.assert(nHeaderBytesRead == @sizeOf(gracie_artifact_header));
+
+    // Setup slab allocator TODO(cjb): Make slab allocator alloc pages
+    var BackingBuffer = std.heap.page_allocator.alloc(u8,
+        ArtifactHeader.SerializedDatabaseSize + ArtifactHeader.DeserializedDatabaseSize
+        + 0x1000*5) catch |Err| return GracieErrHandler(Err);
+
+    var SA: slab_allocator = GracieAInit(BackingBuffer.ptr, BackingBuffer.len);
+    Gracie.?.* = @ptrCast(?*gracie, @alignCast(@alignOf(?*gracie),
+            GracieAAlloc(&SA, @sizeOf(gracie)).?));
+    Gracie.?.*.?.A = SA;
+
+    // Read serialized database
     var SerializedBytes: []u8 = @ptrCast([*]u8,
-        JPCAAlloc(ArtifactStat.size).?)[0 .. ArtifactStat.size];
-    const nBytesRead = ArtifactFile.reader().readAll(SerializedBytes) catch |Err|
-    {
-        switch(Err)
-        {
-            else => Writer.print("{}\n", .{Err}) catch {},
-        }
-        unreachable;
-    };
-    std.debug.assert(nBytesRead == ArtifactStat.size);
-    defer JPCAFree(SerializedBytes.ptr, SerializedBytes.len);
+        GracieAAlloc(&Gracie.?.*.?.A, ArtifactHeader.SerializedDatabaseSize).?)
+            [0..ArtifactHeader.SerializedDatabaseSize];
+    const nDatabaseBytesRead = ArtifactFile.reader().readAll(SerializedBytes) catch |Err|
+        return GracieErrHandler(Err);
+    std.debug.assert(nDatabaseBytesRead == ArtifactHeader.SerializedDatabaseSize);
+    defer GracieAFree(&Gracie.?.*.?.A, SerializedBytes.ptr, SerializedBytes.len);
 
     // TODO(cjb): hs_set_misc_allocator()
-    var DBSize: usize = undefined;
-    HSSuccessOrErr(Writer, c.hs_serialized_database_size(SerializedBytes.ptr, SerializedBytes.len,
-            &DBSize)) catch
-    {
-        return JPC_UNKNOWN_ERROR;
-    };
-
-    var DBMem = JPCAAlloc(DBSize); // TODO(cjb): Handle alloc fail
-
-    JPC.?.Database = @ptrCast(*c.hs_database_t, DBMem);
-    HSSuccessOrErr(Writer, c.hs_deserialize_database_at(SerializedBytes.ptr, SerializedBytes.len,
-            JPC.?.Database)) catch
-    {
-        return JPC_UNKNOWN_ERROR;
-    };
+    Gracie.?.*.?.Database = @ptrCast(*c.hs_database_t,
+        GracieAAlloc(&Gracie.?.*.?.A, ArtifactHeader.DeserializedDatabaseSize));
+    HSLogErrOnFail(c.hs_deserialize_database_at(
+            SerializedBytes.ptr, SerializedBytes.len,
+            Gracie.?.*.?.Database)) catch |Err|
+        return GracieErrHandler(Err);
 
     // TODO(cjb): set allocator used for scratch
-    JPC.?.Scratch = null;
-    HSSuccessOrErr(Writer, c.hs_alloc_scratch(JPC.?.Database, &JPC.?.Scratch)) catch
-    {
-        return JPC_UNKNOWN_ERROR;
-    };
+    Gracie.?.*.?.Scratch = null;
+    HSLogErrOnFail(c.hs_alloc_scratch(Gracie.?.*.?.Database, &Gracie.?.*.?.Scratch)) catch |Err|
+        return GracieErrHandler(Err);
 
-    return JPC_SUCCESS;
+    return GRACIE_SUCCESS;
 }
 
 fn EventHandler(id: c_uint, from: c_ulonglong, to: c_ulonglong, flags: c_uint,
@@ -531,31 +530,25 @@ fn EventHandler(id: c_uint, from: c_ulonglong, to: c_ulonglong, flags: c_uint,
     _ = id;
     _ = flags;
 
-    const Writer = std.io.getStdErr().writer();
     const TextPtr = @ptrCast(?[*]u8, Ctx);
-    Writer.print("Match: '{s}' (from: {d}, to: {d})\n", .{ TextPtr.?[from..to], from, to }) catch
-    {};
+    std.debug.print("Match: '{s}' (from: {d}, to: {d})\n", .{ TextPtr.?[from..to], from, to });
     return 0;
 }
 
-export fn JPCExtract(JPC: ?*jpc, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C) c_int
+export fn GracieExtract(Gracie: ?*?*gracie, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C) c_int
 {
-    const Writer = std.io.getStdErr().writer();
+    HSLogErrOnFail(c.hs_scan(Gracie.?.*.?.Database, Text, nTextBytes, 0,
+            Gracie.?.*.?.Scratch, EventHandler, Text)) catch |Err|
+        return GracieErrHandler(Err);
 
-    if (c.hs_scan(JPC.?.Database, Text, nTextBytes, 0, JPC.?.Scratch, EventHandler, Text) !=
-        c.HS_SUCCESS)
-    {
-        Writer.print("Unable to scan input buffer.\n", .{}) catch {};
-        return JPC_UNKNOWN_ERROR;
-    }
-
-    return JPC_SUCCESS;
+    return GRACIE_SUCCESS;
 }
 
-export fn JPCDeinit(JPC: ?*jpc) callconv(.C) c_int {
-    _ = c.hs_free_scratch(JPC.?.Scratch);
+export fn GracieDeinit(Gracie: ?*?*gracie) callconv(.C) c_int {
+    _ = c.hs_free_scratch(Gracie.?.*.?.Scratch);
+    std.heap.page_allocator.free(Gracie.?.*.?.A.Buf.?[0 .. Gracie.?.*.?.A.BufLen]);
 
-    return JPC_SUCCESS;
+    return GRACIE_SUCCESS;
 }
 
 test "Check hs is working" {}
