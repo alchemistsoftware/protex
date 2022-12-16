@@ -331,17 +331,19 @@ fn SlabAllocMeta(A: *slab_allocator) void
 }
 
 fn ClearScreen() void {
-    const ClearFmt = "\x1B[2J";
-    std.debug.print(ClearFmt, .{});
+    std.debug.print("\x1B[2J", .{});
 }
 fn MoveCursor(Row: u32, Col: u32) void {
-    const MoveCursorFmt = "\x1B[{};{}H";
-    std.debug.print(MoveCursorFmt, .{Row, Col});
+    std.debug.print("\x1B[{};{}H", .{Row, Col});
 }
 fn DEBUGSlabVisularizer(arg_A: [*c]slab_allocator) void
 {
     // TODO(cjb): get stdout writter AND USE IT!!!!
     // ( also refactor this garbage function )
+
+    const ColorRed = "\x1B[0;31m";
+    const ColorGreen = "\x1B[0;32m";
+    const ColorNormal = "\x1B[0m";
 
     var A = arg_A;
     ClearScreen();
@@ -350,7 +352,7 @@ fn DEBUGSlabVisularizer(arg_A: [*c]slab_allocator) void
     {
         CharBuffer[Index] = 0;
     }
-    const SlabBoxHeight: u32 = 17;
+    const SlabBoxHeight: u32 = 18;
     const SlabBoxHorzPad: u32 = 3;
     const SlabEntryFmtStr = "Block_{0d:0>4}";
     const TopBorderFmtStr = "*-{0d:0>3} {1d:0>4}-*";
@@ -400,22 +402,26 @@ fn DEBUGSlabVisularizer(arg_A: [*c]slab_allocator) void
             std.debug.print("{s}", .{FmtdCharBufSlice});
             BottomBorderCursorXPos = TopBorderCursorXPos;
 
-            var NumEntries: usize = std.mem.page_size / Slab.*.Size;
             var SlabEntryIndex: usize = 0;
+            var NumEntries: usize = std.mem.page_size / Slab.*.Size;
             while (SlabEntryIndex < NumEntries) : (SlabEntryIndex +=1 )
             {
+                std.debug.print("{s}", .{ColorRed});
+                var CurrentBlock: ?*slab_block = Slab.*.FreeList;
+                while(CurrentBlock != null) : (CurrentBlock = CurrentBlock.?.Next)
+                {
+                    if (@ptrToInt(CurrentBlock) == Slab.*.SlabStart + SlabEntryIndex * Slab.*.Size)
+                    {
+                        std.debug.print("{s}", .{ColorGreen});
+                        break;
+                    }
+                }
                 MoveCursor(LeftBorderCursorYPos + @intCast(u32, SlabEntryIndex), LeftBorderCursorXPos + 1);
                 FmtdCharBufSlice = std.fmt.bufPrint(CharBuffer[0 .. ], SlabEntryFmtStr, .{SlabEntryIndex}) catch unreachable;
                 std.debug.print("{s}", .{FmtdCharBufSlice});
-                for (CharBuffer) |_, Index|
-                {
-                    CharBuffer[Index] = 0;
-                }
-                if (SlabEntryIndex + 1 >= SlabBoxHeight - 2)
-                {
-                    break;
-                }
+                for (CharBuffer) |_, Index| CharBuffer[Index] = 0;
             }
+            std.debug.print("{s}", .{ColorNormal});
 
             // Left border
             FmtdCharBufSlice = std.fmt.bufPrint(CharBuffer[0 .. ], LeftBorderFmtStr, .{}) catch unreachable;
