@@ -129,120 +129,101 @@ fn SlabInit(A: *slab_allocator, S: ?*slab, Size: u16, IsMetaSlab: bool) void {
     return SlabInitAlign(A, S, Size, @sizeOf(?*anyopaque), IsMetaSlab);
 }
 
-fn SlabBlocksBetween(StartBlockLoc: usize, EndBlockLoc: usize, BlockSize: usize) usize
+fn SlabAllocNBlocksForward(S: ?*slab, BlockSize: usize, nRequestedBlocks: usize) bool
 {
-    var BlocksBetween: usize = 0;
-    var CurrentBlockLoc: usize = EndBlockLoc;
-    while(CurrentBlockLoc >= StartBlockLoc) : (BlocksBetween += 1)
+    var Result: bool = false;
+    var FreeBlockCount: usize = 0;
+    var CurS: ?*slab = S;
+    while ((CurS != null) and
+           (CurS.?.Size == BlockSize) and
+           (FreeBlockCount < nRequestedBlocks)) : (CurS = CurS.?.NextSlab)
     {
-        CurrentBlockLoc -= BlockSize;
+        FreeBlockCount += SlabCountContigFreeBlocks(CurS);
     }
-
-    return BlocksBetween;
-}
-
-/// Choose slab from slablist capable of handling n contigious block allocations.
-///
-/// Walk slab list performing "dry slaballoc's" to determine if a slab could have handled an
-/// allocation. If dry allocation succeded than run checks on that block's position in memory. If
-/// The position is ok than increment allocation count, if this is the last required allocation
-/// than return the slab in use when allocation count was 0. If the block didn't pass the position
-/// checks than the allocation count is reset and the current slab at this point is recorded. Upon
-/// dry allocation fail continue to the next slab. Once the slab list is exhausted return null.
-///
-/// - Paramaters:
-///   - S: optional slab ptr to begin search from
-///   - Size: block size of the allocation
-///   - nBlocks: number of blocks required for this allocation
-///
-/// - Returns: optional ptr to slab on success otherwise null.
-fn FindStartSlabToAllocBlocks(S: ?*slab, Size: usize, nBlocks: usize) ?*slab
-{
-    var CurrentSlab: ?*slab = S;
-    var TargetSlab: ?*slab = CurrentSlab;
-    var AllocCount: usize = 0;
-    var CurrentBlockLoc: usize = 0;
-    while (CurrentSlab != null) : (CurrentSlab = CurrentSlab.?.NextSlab)
+    if (FreeBlockCount >= nRequestedBlocks)
     {
-        var CurrentBlockPtr = CurrentSlab.?.FreeList;
-
-        // Dry slaballoc
-        if ((CurrentSlab.?.Size != Size) or
-            (CurrentBlockPtr == null))
+        Result = true;
+        CurS = S;
+        var AllocCount: usize = 0;
+        while (AllocCount < nRequestedBlocks)
         {
-            continue;
-        }
-        while (CurrentBlockPtr != null) : (CurrentBlockPtr = CurrentBlockPtr.?.Next)
-        {
-            const NextBlockLoc = @intCast(usize, @ptrToInt(CurrentBlockPtr));
-
-            // Verify NextBlockLoc position in memory
-            if ((CurrentBlockLoc == 0) or                     // Initial block loc assignment
-                (CurrentBlockLoc - Size == NextBlockLoc) or   // Contiguous allocation within slab
-                (SlabBlocksBetween(CurrentBlockLoc, NextBlockLoc, Size) <
-                 (std.mem.page_size / Size) * 2))             // Next page
+            if (CurS.?.FreeList != null)
             {
                 AllocCount += 1;
-
-                if (AllocCount >= nBlocks) // Have enough blocks yet?
+                CurS.?.FreeList = CurS.?.FreeList.?.Next;
+                if (AllocCount == (nRequestedBlocks % (std.mem.page_size / BlockSize)))
                 {
-                    return TargetSlab;
+                    CurS = CurS.?.NextSlab;
                 }
             }
-            else // Failed block position checks... reset and try again.
+            else
             {
-                AllocCount = 0;
-                TargetSlab = CurrentSlab;
-            }
-
-            CurrentBlockLoc = NextBlockLoc;
-            if (AllocCount == (nBlocks % (std.mem.page_size / Size)))
-            {
-                break;
+                CurS = CurS.?.NextSlab;
             }
         }
-
     }
-    return null;
+
+    return Result;
 }
 
-fn SlabAllocNBlocks(S: ?*slab, Size: usize, NewLoc: *usize, nBlocks: usize) bool
+fn SlabCountContigFreeBlocks(S: ?*slab) usize
 {
-    var CurrentSlab: ?*slab = FindStartSlabToAllocBlocks(S, Size, nBlocks);
-    if (CurrentSlab == null)
+    var Result: usize = 0;
+    const BlockSize = S.?.Size;
+    var CurrentBlockPtr = S.?.FreeList;
+    var CurrentBlockLoc: usize = 0;
+    while(CurrentBlockPtr != null) : (CurrentBlockPtr = CurrentBlockPtr.?.Next)
     {
-        return false;
-    }
-
-    var AllocCount: usize = 0;
-    while (AllocCount < nBlocks)
-    {
-        if (CurrentSlab.?.FreeList != null)
+        const NextBlockLoc = @ptrToInt(CurrentBlockPtr);
+        if ((CurrentBlockLoc == 0) or
+            (CurrentBlockLoc - BlockSize == NextBlockLoc))
         {
-            AllocCount += 1;
-            if (AllocCount <= (nBlocks % (std.mem.page_size / Size)))
-            {
-                // Record first block
-                if (AllocCount == 1)
-                {
-                    NewLoc.* = @intCast(usize, @ptrToInt(CurrentSlab.?.FreeList));
-                }
-            }
-            CurrentSlab.?.FreeList = CurrentSlab.?.FreeList.?.Next;
-            if (AllocCount == (nBlocks % (std.mem.page_size / Size)))
-            {
-                CurrentSlab = CurrentSlab.?.NextSlab;
-            }
+            Result += 1;
         }
         else
         {
-            CurrentSlab = CurrentSlab.?.NextSlab;
+            Result = 1;
+        }
+        CurrentBlockLoc = NextBlockLoc;
+    }
+
+    return Result;
+}
+
+fn SlabAllocNBlocks(S: ?*slab, BlockSize: usize, BlockCount: *usize, nRequestedBlocks: usize) ?usize
+{
+    // Base case(s)
+    if (S == null)
+    {
+        return null;
+    }
+    else if (S.?.Size != BlockSize)
+    {
+        return SlabAllocNBlocks(S.?.NextSlab, BlockSize, BlockCount, nRequestedBlocks);
+    }
+
+    var Result = SlabAllocNBlocks(S.?.NextSlab, BlockSize, BlockCount, nRequestedBlocks);
+    var nRemainingBlocks = BlockCount.*;
+    BlockCount.* += SlabCountContigFreeBlocks(S);
+
+    if ((Result == null) and
+        (BlockCount.* >= nRequestedBlocks))
+    {
+        const nBlocksFromThisSlab = nRequestedBlocks - nRemainingBlocks;
+        if (SlabAllocNBlocksForward(S.?.NextSlab, BlockSize, nRemainingBlocks))
+        {
+            var BaseLoc: usize = undefined;
+            var AllocCount: usize = 0;
+            while (AllocCount < nBlocksFromThisSlab) : (AllocCount += 1)
+            {
+                _ = SlabAlloc(S, BlockSize, &BaseLoc);
+            }
+            Result = BaseLoc;
         }
     }
 
-    return true;
+    return Result;
 }
-
 
 fn SlabAlloc(S: ?*slab, Size: usize, NewLoc: *usize) bool
 {
@@ -486,10 +467,11 @@ fn GracieAAlloc(A: *slab_allocator, RequestedSize: usize) callconv(.C) ?*anyopaq
     }
     while (true) // Until allocation is sucessful or out of space
     {
-        var BaseLoc: usize = undefined;
-        if (SlabAllocNBlocks(A.*.SlabList, BlockSize, &BaseLoc, BlockCount))
+        var BlockAccum: usize = 0;
+        var BaseLoc: ?usize = SlabAllocNBlocks(A.*.SlabList, BlockSize, &BlockAccum, BlockCount);
+        if (BaseLoc != null)
         {
-            return @intToPtr(?*anyopaque, BaseLoc);
+            return @intToPtr(?*anyopaque, BaseLoc.?);
         }
 
         var SlabLoc: usize = undefined;
@@ -505,6 +487,7 @@ fn GracieAAlloc(A: *slab_allocator, RequestedSize: usize) callconv(.C) ?*anyopaq
         }
         var NewSlab: ?*slab = @intToPtr(?*slab, SlabLoc);
         SlabInit(A, NewSlab, BlockSize, false);
+
 
         NewSlab.?.NextSlab = A.*.SlabList;
         A.*.SlabList = NewSlab;
