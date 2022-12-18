@@ -216,9 +216,14 @@ fn SlabAllocNBlocks(S: ?*slab, BlockSize: usize, BlockCount: *usize, nRequestedB
             var AllocCount: usize = 0;
             while (AllocCount < nBlocksFromThisSlab) : (AllocCount += 1)
             {
-                _ = SlabAlloc(S, BlockSize, &BaseLoc);
+                _ = SlabAlloc(S, BlockSize, &BaseLoc); // TODO(cjb): enforce success
             }
             Result = BaseLoc;
+        }
+        else
+        {
+            // Reset block count to this slab's count since allocation failed
+            BlockCount.* -= nRemainingBlocks;
         }
     }
 
@@ -487,7 +492,6 @@ fn GracieAAlloc(A: *slab_allocator, RequestedSize: usize) callconv(.C) ?*anyopaq
         }
         var NewSlab: ?*slab = @intToPtr(?*slab, SlabLoc);
         SlabInit(A, NewSlab, BlockSize, false);
-
 
         NewSlab.?.NextSlab = A.*.SlabList;
         A.*.SlabList = NewSlab;
