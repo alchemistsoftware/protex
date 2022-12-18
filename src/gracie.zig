@@ -452,11 +452,19 @@ fn GracieADeinit(A: *slab_allocator) void
     A.MetaSlab = null;
 }
 
+fn GracieAAllocArr(A: *slab_allocator, RequestedSize: usize) []u8
+{
+    var Result: []u8 = @ptrCast([*]u8,
+        GracieAAlloc(A, RequestedSize).?)[0..RequestedSize];
+    return Result;
+}
+
+// TODO(cjb) record allocation sizes. this needs to happen so "hs_set_allocator" can happen
 fn GracieAAlloc(A: *slab_allocator, RequestedSize: usize) callconv(.C) ?*anyopaque
 {
-    var GoodBucketShift: u8 = 5;
+    var GoodBucketShift: u8 = 5; // 64
     while ((RequestedSize > std.math.pow(usize, 2, GoodBucketShift)) and
-           (GoodBucketShift < 10))
+           (GoodBucketShift < 10)) // 1024
     {
         GoodBucketShift += 1;
     }
@@ -496,6 +504,11 @@ fn GracieAAlloc(A: *slab_allocator, RequestedSize: usize) callconv(.C) ?*anyopaq
         NewSlab.?.NextSlab = A.*.SlabList;
         A.*.SlabList = NewSlab;
     }
+}
+
+fn GracieAFreeArr(A: *slab_allocator, Mem: []u8) void
+{
+    GracieAFree(A, Mem.ptr, Mem.len);
 }
 
 fn GracieAFree(A: *slab_allocator, Ptr: ?*anyopaque, Size: usize) void
@@ -573,15 +586,12 @@ fn GracieErrHandler(Err: anyerror) c_int
 
 // HACK(cjb): Fine? ( on the upside could ommit throwing ?*?*gracie ptrs all over )
 //  Introduced to set hs_allocator
-var GracieCtx: ?*gracie = undefined;
-
-fn Bannans(Size: usize) ?*anyopaque
-{
-    var Ptr = GracieAAlloc(&GracieCtx.?.A, Size);
-    return Ptr;
-}
-
-// FIXME(cjb) record allocation sizes!! this needs to happen so we can "hs_set_allocator"
+//var GracieCtx: ?*gracie = undefined;
+//fn Bannans(Size: usize) ?*anyopaque
+//{
+//    var Ptr = GracieAAlloc(&GracieCtx.?.A, Size);
+//    return Ptr;
+//}
 
 export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
 {
@@ -605,27 +615,22 @@ export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv
 
     // Setup slab allocator TODO(cjb): Make slab allocator alloc pages
     var BackingBuffer = std.heap.page_allocator.alloc(u8,
-        ArtifactHeader.DatabaseSize*2 // Need to store serialized buffer as well. (e.g *2)
-        + 0x1000*5) catch |Err| return GracieErrHandler(Err);
+        ArtifactHeader.DatabaseSize*3 // Need to store serialized buffer as well. (e.g *2)
+        + 0x1000*4) catch |Err| return GracieErrHandler(Err);
     var SA: slab_allocator = GracieAInit(BackingBuffer.ptr, BackingBuffer.len);
 
-     // Allocate new gracie context and copy alloactor state to it
+     // Allocate new gracie context and copy alloactor over to it
     Gracie.?.* = @ptrCast(?*gracie, @alignCast(@alignOf(?*gracie),
             GracieAAlloc(&SA, @sizeOf(gracie)).?));
     Gracie.?.*.?.A = SA;
 
     // Read serialized database
-    var SerializedBytes: []u8 = @ptrCast([*]u8,
-        GracieAAlloc(&Gracie.?.*.?.A, ArtifactHeader.DatabaseSize).?)
-            [0..ArtifactHeader.DatabaseSize];
+    var SerializedBytes = GracieAAllocArr(&Gracie.?.*.?.A, ArtifactHeader.DatabaseSize);
+    defer GracieAFreeArr(&Gracie.?.*.?.A, SerializedBytes);
 
     const nDatabaseBytesRead = ArtifactFile.reader().readAll(SerializedBytes) catch |Err|
         return GracieErrHandler(Err);
     std.debug.assert(nDatabaseBytesRead == ArtifactHeader.DatabaseSize);
-    defer GracieAFree(&Gracie.?.*.?.A, SerializedBytes.ptr, SerializedBytes.len);
-
-    // HACK(cjb): Ptr to gracie context for allocations
-    GracieCtx = Gracie.?.*;
 
     //var HSAlloc: c.hs_alloc_t = Bannans;
     //var HSFree: c.hs_free_t = Bannans2;
@@ -677,4 +682,13 @@ export fn GracieDeinit(Gracie: ?*?*gracie) callconv(.C) c_int {
     return GRACIE_SUCCESS;
 }
 
-test "Check hs is working" {}
+test "init and deinit"
+{
+    var GracieCtx: ?*gracie = null;
+    try std.testing.expect(
+        GracieInit(&GracieCtx, "./data/gracie.bin") ==
+        GRACIE_SUCCESS);
+    try std.testing.expect(
+        GracieDeinit(&GracieCtx) ==
+        GRACIE_SUCCESS);
+}
