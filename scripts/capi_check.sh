@@ -25,7 +25,7 @@ gcc $SourceFiles $CompilerFlags $IncludeFlags $LibDirFlags -Wl,$LinkerFlags -o $
 echo "*----------*"
 echo "| packager |"
 echo "*----------*"
-$BinsDir/packager $DataDir/patterns #TODO(cjb): Have packager specify artifact path
+$BinsDir/packager $DataDir/gracie.conf #TODO(cjb): Have packager specify artifact path
 ln -Pvf $DataDir/gracie.bin.0.0.1 $DataDir/gracie.bin
 
 # Run capi
