@@ -1,5 +1,10 @@
 const std = @import("std");
-const gracie = @import("gracie.zig");
+
+const gracie_artifact_header = extern struct {
+//    SerializedDatabaseSize: usize,   // NOTE(cjb) there seems to be no diffrence between
+//    DeserializedDatabaseSize: usize, // deserialized and serialized db's sizes
+    DatabaseSize: usize,
+};
 
 const c = @cImport({
     @cInclude("hs.h");
@@ -25,7 +30,6 @@ pub fn main() !void {
     // Parse file
     var Parser = std.json.Parser.init(PA, false);
     var ConfBytes = try ConfFile.reader().readAllAlloc(PA, 1024*5);
-
     const ParseTree = try Parser.parse(ConfBytes);
     var Extractors = ParseTree.root.Object.get("extractors") orelse unreachable;
     var FirstExtractor = Extractors.Array.items[0].Object;
@@ -77,12 +81,12 @@ pub fn main() !void {
         unreachable;
     }
 
-    var ArtifactHeader: gracie.gracie_artifact_header = undefined;
+    var ArtifactHeader: gracie_artifact_header = undefined;
     ArtifactHeader.DatabaseSize = DeserializedSize;
 
     const ArtifactFile = try std.fs.cwd().createFile("data/gracie.bin.0.0.1", .{});
     _ = try ArtifactFile.write(
-        @ptrCast([*]u8, &ArtifactHeader)[0 .. @sizeOf(gracie.gracie_artifact_header)]);
+        @ptrCast([*]u8, &ArtifactHeader)[0 .. @sizeOf(gracie_artifact_header)]);
     const BytesWritten = try ArtifactFile.write(SerializedDBBytes[0..nSerializedDBBytes]);
     if (BytesWritten != nSerializedDBBytes) {
         unreachable;

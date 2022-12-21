@@ -615,7 +615,8 @@ export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv
 
     // Setup slab allocator TODO(cjb): Make slab allocator alloc pages
     var BackingBuffer = std.heap.page_allocator.alloc(u8,
-        ArtifactHeader.DatabaseSize*3 // Need to store serialized buffer as well. (e.g *2)
+        ArtifactHeader.DatabaseSize*3 // Need to store serialized buffer and
+                                      // database at same time
         + 0x1000*4) catch |Err| return GracieErrHandler(Err);
     var SA: slab_allocator = GracieAInit(BackingBuffer.ptr, BackingBuffer.len);
 
@@ -659,10 +660,13 @@ fn EventHandler(id: c_uint, from: c_ulonglong, to: c_ulonglong, flags: c_uint,
 {
     _ = flags;
 
-    const TextPtr = @ptrCast(?[*]u8, Ctx);
-    std.debug.print("Match_{d}: '{s}' (from: {d}, to: {d})\n", .{id, TextPtr.?[from..to], from, to});
+    const TextPtr = @ptrCast([*]u8, Ctx);
+    std.debug.print("Match_{d}: '{s}' (from: {d}, to: {d})\n", .{id, TextPtr[from..to], from, to});
+    _ = PyPlugRun(@intToPtr([*]u8, @ptrToInt(TextPtr) + from), to - from);
     return 0;
 }
+
+extern fn PyPlugRun(Text: [*]const u8, Size: usize) c_int;
 
 export fn GracieExtract(Gracie: ?*?*gracie, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C) c_int
 {
@@ -670,6 +674,8 @@ export fn GracieExtract(Gracie: ?*?*gracie, Text: ?[*]u8, nTextBytes: c_uint) ca
             Gracie.?.*.?.Scratch, EventHandler, Text)) catch |Err|
         return GracieErrHandler(Err);
 
+    // Handle each match:
+    // extractor_id, match_id, category_id
     DEBUGSlabVisularizer(&Gracie.?.*.?.A);
 
     return GRACIE_SUCCESS;
@@ -682,7 +688,7 @@ export fn GracieDeinit(Gracie: ?*?*gracie) callconv(.C) c_int {
     return GRACIE_SUCCESS;
 }
 
-test "init and deinit"
+test "init then deinit"
 {
     var GracieCtx: ?*gracie = null;
     try std.testing.expect(
@@ -691,4 +697,8 @@ test "init and deinit"
     try std.testing.expect(
         GracieDeinit(&GracieCtx) ==
         GRACIE_SUCCESS);
+}
+
+test "embededing python"
+{
 }
