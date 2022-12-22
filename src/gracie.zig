@@ -265,10 +265,6 @@ fn SlabFree(S: ?*slab, Location: usize, Size: usize) bool
             BlockCount += 1;
         }
 
-        // Compute starting slab's number of used block's
-        const BlocksPerSlab: usize = std.mem.page_size / BlockSize;
-        const InitialSlabBlocksUsed = BlocksPerSlab - (Location - S.?.SlabStart) / BlockSize;
-
         var CurrentSlab = S;
         var nBlocksFreed: usize = 0;
         while(nBlocksFreed < BlockCount) : (nBlocksFreed += 1)
@@ -280,20 +276,7 @@ fn SlabFree(S: ?*slab, Location: usize, Size: usize) bool
                 CurrentSlab = CurrentSlab.?.NextSlab;
                 std.debug.assert(CurrentSlab != null);
             }
-
-            // Map nBlocksFreed => TargetBlockIndex
-            var TargetBlockIndex: usize = undefined;
-            if (nBlocksFreed < InitialSlabBlocksUsed)
-            {
-                TargetBlockIndex = (BlocksPerSlab - 1) -
-                                    (nBlocksFreed % BlocksPerSlab);
-            }
-            else
-            {
-                TargetBlockIndex = (BlocksPerSlab - 1) -
-                                    ((nBlocksFreed - InitialSlabBlocksUsed) % BlocksPerSlab);
-            }
-
+            const TargetBlockIndex = (BlockLoc - CurrentSlab.?.SlabStart) / BlockSize;
             var NewEntry: *slab_block = @intToPtr(*slab_block,
                 CurrentSlab.?.SlabStart + TargetBlockIndex * BlockSize);
             NewEntry.*.Next = CurrentSlab.?.FreeList;
@@ -338,7 +321,7 @@ fn DEBUGSlabVisularizer(arg_A: [*c]slab_allocator) void
     {
         CharBuffer[Index] = 0;
     }
-    const SlabBoxHeight: u32 = 18;
+    const SlabBoxHeight: u32 = 65;//18;
     const SlabBoxHorzPad: u32 = 3;
     const SlabEntryFmtStr = "Block_{0d:0>4}";
     const TopBorderFmtStr = "*-{0d:0>3} {1d:0>4}-*";
@@ -452,10 +435,9 @@ fn GracieADeinit(A: *slab_allocator) void
     A.MetaSlab = null;
 }
 
-fn GracieAAllocArr(A: *slab_allocator, RequestedSize: usize) []u8
+fn GracieAAllocSlice(A: *slab_allocator, Size: usize) []u8
 {
-    var Result: []u8 = @ptrCast([*]u8,
-        GracieAAlloc(A, RequestedSize).?)[0..RequestedSize];
+    var Result: []u8 = @ptrCast([*]u8, GracieAAlloc(A, Size).?)[0..Size];
     return Result;
 }
 
@@ -506,9 +488,9 @@ fn GracieAAlloc(A: *slab_allocator, RequestedSize: usize) callconv(.C) ?*anyopaq
     }
 }
 
-fn GracieAFreeArr(A: *slab_allocator, Mem: []u8) void
+fn GracieAFreeSlice(A: *slab_allocator, Slice: []u8) void
 {
-    GracieAFree(A, Mem.ptr, Mem.len);
+    GracieAFree(A, Slice.ptr, Slice.len);
 }
 
 fn GracieAFree(A: *slab_allocator, Ptr: ?*anyopaque, Size: usize) void
@@ -531,18 +513,32 @@ fn GracieAFree(A: *slab_allocator, Ptr: ?*anyopaque, Size: usize) void
 
 const c = @cImport({
     @cInclude("hs.h");
+    @cInclude("sempy.h");
 });
 
 pub const gracie_artifact_header = extern struct {
 //    SerializedDatabaseSize: usize,   // NOTE(cjb) there seems to be no diffrence between
 //    DeserializedDatabaseSize: usize, // deserialized and serialized db's sizes
     DatabaseSize: usize,
+    nPatterns: usize,
 };
 
 pub const gracie = extern struct {
     Database: ?*c.hs_database_t,
     Scratch: ?*c.hs_scratch_t,
     A: slab_allocator,
+
+    /// Arr of category ids, where pattern id is the index of the associated category id.
+    CategoryIDs: ?[*]c_uint,
+    MatchBuf: ?[*]gracie_match,
+    nMatches: usize,
+    MatchBufCap: usize,
+};
+
+pub const gracie_match = extern struct {
+    SO: c_ulonglong,
+    EO: c_ulonglong,
+    CategoryID: c_uint,
 };
 
 pub const GRACIE_SUCCESS: c_int = 0;        // Call was executed successfully
@@ -615,7 +611,8 @@ export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv
 
     // Setup slab allocator TODO(cjb): Make slab allocator alloc pages
     var BackingBuffer = std.heap.page_allocator.alloc(u8,
-        ArtifactHeader.DatabaseSize*3 // Need to store serialized buffer as well. (e.g *2)
+        ArtifactHeader.DatabaseSize*3 // Need to store serialized buffer and
+                                      // database at same time
         + 0x1000*4) catch |Err| return GracieErrHandler(Err);
     var SA: slab_allocator = GracieAInit(BackingBuffer.ptr, BackingBuffer.len);
 
@@ -625,8 +622,8 @@ export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv
     Gracie.?.*.?.A = SA;
 
     // Read serialized database
-    var SerializedBytes = GracieAAllocArr(&Gracie.?.*.?.A, ArtifactHeader.DatabaseSize);
-    defer GracieAFreeArr(&Gracie.?.*.?.A, SerializedBytes);
+    var SerializedBytes = GracieAAllocSlice(&Gracie.?.*.?.A, ArtifactHeader.DatabaseSize);
+    defer GracieAFreeSlice(&Gracie.?.*.?.A, SerializedBytes);
 
     const nDatabaseBytesRead = ArtifactFile.reader().readAll(SerializedBytes) catch |Err|
         return GracieErrHandler(Err);
@@ -651,38 +648,92 @@ export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv
     HSLogErrOnFail(c.hs_alloc_scratch(Gracie.?.*.?.Database, &Gracie.?.*.?.Scratch)) catch |Err|
         return GracieErrHandler(Err);
 
+    // Initialize category ids
+    var CategoryIDsBuf = GracieAAllocSlice(&Gracie.?.*.?.A,
+        ArtifactHeader.nPatterns * @sizeOf(c_uint));
+    const CategoryIDs = @ptrCast([*]c_uint, @alignCast(@alignOf(c_uint),
+            CategoryIDsBuf.ptr))[0 .. ArtifactHeader.nPatterns];
+
+    // Read pattern id & category id
+    var PatCatIndex: usize = 0;
+    while (PatCatIndex < ArtifactHeader.nPatterns) : (PatCatIndex += 1)
+    {
+        var IDBuf = ArtifactFile.reader().readBytesNoEof(4) catch |Err|
+            return GracieErrHandler(Err);
+        const IDPtr = @ptrCast(*c_uint, @alignCast(@alignOf(c_uint), &IDBuf));
+        var CatBuf = ArtifactFile.reader().readBytesNoEof(4) catch |Err|
+            return GracieErrHandler(Err);
+        const Cat = @ptrCast(*c_uint, @alignCast(@alignOf(c_uint), &CatBuf));
+        CategoryIDs[IDPtr.*] = Cat.*;
+    }
+    Gracie.?.*.?.CategoryIDs = @ptrCast(?[*]c_uint, CategoryIDs.ptr);
+
+    // Initialize match buffer
+    Gracie.?.*.?.MatchBuf = @ptrCast(?[*]gracie_match, @alignCast(@alignOf(gracie_match),
+            GracieAAllocSlice(&Gracie.?.*.?.A, 1024))); // 1k outta be enough
+    Gracie.?.*.?.MatchBufCap = 1024 / @sizeOf(gracie_match);
+    Gracie.?.*.?.nMatches = 0;
+
+    // Initialize python plugins
+    _ = c.SempyInit();
+
+    const DEBUGSource =
+        \\def foo(Text: str, CategoryID: int) -> None:
+        \\  print(f'{Text} + {CategoryID}')
+    ;
+    _ = c.SempyLoadModuleFromSource(DEBUGSource, DEBUGSource.len);
+
     return GRACIE_SUCCESS;
 }
 
-fn EventHandler(id: c_uint, from: c_ulonglong, to: c_ulonglong, flags: c_uint,
+fn EventHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
     Ctx: ?*anyopaque) callconv(.C) c_int
 {
-    _ = flags;
-
-    const TextPtr = @ptrCast(?[*]u8, Ctx);
-    std.debug.print("Match_{d}: '{s}' (from: {d}, to: {d})\n", .{id, TextPtr.?[from..to], from, to});
-    return 0;
+    const GraciePtr = @ptrCast(?*gracie, @alignCast(@alignOf(?*gracie), Ctx));
+    if (GraciePtr.?.nMatches <= GraciePtr.?.MatchBufCap)
+    {
+        GraciePtr.?.MatchBuf.?[GraciePtr.?.nMatches] =
+            gracie_match{.SO=From, .EO=To, .CategoryID=GraciePtr.?.CategoryIDs.?[ID]};
+        GraciePtr.?.nMatches += 1;
+        return 0;
+    }
+    return 1;
 }
 
 export fn GracieExtract(Gracie: ?*?*gracie, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C) c_int
 {
-    HSLogErrOnFail(c.hs_scan(Gracie.?.*.?.Database, Text, nTextBytes, 0,
-            Gracie.?.*.?.Scratch, EventHandler, Text)) catch |Err|
+    const GraciePtr = Gracie.?.*.?;
+
+    // Reset stuff
+    GraciePtr.nMatches = 0;
+
+    HSLogErrOnFail(c.hs_scan(GraciePtr.Database, Text, nTextBytes, 0,
+            GraciePtr.Scratch, EventHandler, GraciePtr)) catch |Err|
         return GracieErrHandler(Err);
 
-    DEBUGSlabVisularizer(&Gracie.?.*.?.A);
+    var MatchIndex: usize = 0;
+    while (MatchIndex < GraciePtr.nMatches) : (MatchIndex += 1)
+    {
+        const M = GraciePtr.MatchBuf.?[MatchIndex];
+        const TextSOPtr = @intToPtr(?[*]const u8, @ptrToInt(Text) + @intCast(usize, M.SO));
+        _ = c.SempyRunModule(TextSOPtr, @intCast(usize, M.EO - M.SO), M.CategoryID);
+    }
+
+//    DEBUGSlabVisularizer(&GraciePtr.A);
 
     return GRACIE_SUCCESS;
 }
 
 export fn GracieDeinit(Gracie: ?*?*gracie) callconv(.C) c_int {
     _ = c.hs_free_scratch(Gracie.?.*.?.Scratch);
+    _ = c.SempyDeinit();
+
     std.heap.page_allocator.free(Gracie.?.*.?.A.Buf.?[0 .. Gracie.?.*.?.A.BufLen]);
 
     return GRACIE_SUCCESS;
 }
 
-test "init and deinit"
+test "init then deinit"
 {
     var GracieCtx: ?*gracie = null;
     try std.testing.expect(
@@ -691,4 +742,8 @@ test "init and deinit"
     try std.testing.expect(
         GracieDeinit(&GracieCtx) ==
         GRACIE_SUCCESS);
+}
+
+test "embededing python"
+{
 }
