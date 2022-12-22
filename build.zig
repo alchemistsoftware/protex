@@ -5,26 +5,28 @@ pub fn build(B: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const Mode = B.standardReleaseOptions();
 
-    const PyPlug = B.addSharedLibrary("pyplug", null, B.version(0, 0, 1));
-    PyPlug.addCSourceFiles(&.{"src/pyplug.c",}, &.{"-g",});
-    PyPlug.setBuildMode(Mode);
-    PyPlug.setOutputDir("./lib");
-    PyPlug.addIncludeDir("/usr/include/python3.8");
-    PyPlug.linkSystemLibrary("python3.8");
-    PyPlug.linkSystemLibrary("crypt");
-    PyPlug.linkSystemLibrary("pthread");
-    PyPlug.linkSystemLibrary("dl");
-    PyPlug.linkSystemLibrary("util");
-    PyPlug.linkSystemLibrary("m");
-    PyPlug.linkLibC();
-    PyPlug.install();
+    const Sempy = B.addSharedLibrary("sempy", null, B.version(0, 0, 1));
+    Sempy.addCSourceFiles(&.{"src/sempy.c",}, &.{"-g",});
+    Sempy.setBuildMode(Mode);
+    Sempy.setOutputDir("./lib");
+    Sempy.addIncludeDir("/usr/include/python3.8");
+    Sempy.linkSystemLibrary("python3.8");
+    Sempy.linkSystemLibrary("crypt");
+    Sempy.linkSystemLibrary("pthread");
+    Sempy.linkSystemLibrary("dl");
+    Sempy.linkSystemLibrary("util");
+    Sempy.linkSystemLibrary("m");
+    Sempy.linkLibC();
+    Sempy.install();
 
     const Gracie = B.addSharedLibrary("gracie", "src/gracie.zig", B.version(0, 0, 1));
-    Gracie.setOutputDir("./lib");
     Gracie.setBuildMode(Mode);
-    Gracie.linkLibrary(PyPlug);
+    Gracie.setOutputDir("./lib");
+    Gracie.addIncludeDir("/usr/include/python3.8");
     Gracie.addIncludeDir("/usr/include/hs/");
+    Gracie.addIncludeDir("./src");
     Gracie.linkSystemLibrary("hs_runtime");
+    Gracie.linkLibrary(Sempy);
     Gracie.linkLibC();
     Gracie.install();
 
