@@ -9,7 +9,7 @@ pub fn build(B: *std.build.Builder) void {
     Sempy.addCSourceFiles(&.{"src/sempy.c",}, &.{"-g",});
     Sempy.setBuildMode(Mode);
     Sempy.setOutputDir("./lib");
-    Sempy.addIncludeDir("/usr/include/python3.8");
+    Sempy.addIncludePath("/usr/include/python3.8");
     Sempy.linkSystemLibrary("python3.8");
     Sempy.linkSystemLibrary("crypt");
     Sempy.linkSystemLibrary("pthread");
@@ -22,9 +22,9 @@ pub fn build(B: *std.build.Builder) void {
     const Gracie = B.addSharedLibrary("gracie", "src/gracie.zig", B.version(0, 0, 1));
     Gracie.setBuildMode(Mode);
     Gracie.setOutputDir("./lib");
-    Gracie.addIncludeDir("/usr/include/python3.8");
-    Gracie.addIncludeDir("/usr/include/hs/");
-    Gracie.addIncludeDir("./src");
+    Gracie.addIncludePath("/usr/include/python3.8");
+    Gracie.addIncludePath("/usr/include/hs/");
+    Gracie.addIncludePath("./src");
     Gracie.linkSystemLibrary("hs_runtime");
     Gracie.linkLibrary(Sempy);
     Gracie.linkLibC();
@@ -32,11 +32,15 @@ pub fn build(B: *std.build.Builder) void {
 
     const GracieTests = B.addTest("src/gracie.zig");
     GracieTests.setBuildMode(Mode);
-    GracieTests.addIncludeDir("/usr/include/hs/");
+    GracieTests.addIncludePath("/usr/include/hs/");
     GracieTests.linkSystemLibrary("hs_runtime");
     GracieTests.linkLibC();
 
+    const SlabaTests = B.addTest("src/slab_allocator.zig");
+    SlabaTests.setBuildMode(Mode);
+
     const TestStep = B.step("test", "Run library tests");
+    TestStep.dependOn(&SlabaTests.step);
     TestStep.dependOn(&GracieTests.step);
 
     // Packager exe
@@ -44,7 +48,7 @@ pub fn build(B: *std.build.Builder) void {
     Packager.setOutputDir("./bin");
     Packager.setBuildMode(Mode);
     Packager.linkSystemLibrary("hs");
-    Packager.addIncludeDir("/usr/include/hs/");
+    Packager.addIncludePath("/usr/include/hs/");
     Packager.linkLibC();
     Packager.install();
 

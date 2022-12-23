@@ -1,541 +1,31 @@
 const std = @import("std");
-
-const slab_block = extern struct
-{
-    Next: ?*slab_block,
-};
-
-const slab = extern struct
-{
-    NextSlab: ?*slab,
-    FreeList: ?*slab_block,
-    SlabStart: usize,
-    Size: u16,
-    Padding: u16,
-};
-
-const slab_allocator = extern struct
-{
-    Buf: ?[*]u8,
-    BufLen: usize,
-    LeftOffset: usize,
-    RightOffset: usize,
-    SlabList: ?*slab,
-    MetaSlab: ?*slab,
-};
-
-fn IsPowerOfTwo(X: usize) bool
-{
-    return (X & (X - 1)) == 0;
-}
-
-fn AlignBackward(Ptr: usize, Align: usize) usize
-{
-    std.debug.assert(IsPowerOfTwo(Align));
-
-    var P: usize = Ptr;
-    const A: usize = Align;
-
-    // Same as (P % A) but faster as 'A' is a power of two
-    const Modulo: usize = P & (A - 1);
-
-    if (Modulo != 0)
-    {
-        P -= Modulo;
-    }
-
-    return (P);
-}
-
-fn AlignForward(Ptr: usize, Align: usize) usize
-{
-    std.debug.assert(IsPowerOfTwo(Align));
-
-    var P: usize = Ptr;
-    const A: usize = Align;
-
-    // Same as (P % A) but faster as 'A' is a power of two
-    const Modulo: usize = P & (A - 1);
-
-    if (Modulo != 0)
-    {
-        P += A - Modulo;
-    }
-
-    return (P);
-}
-
-fn SlabInitAlign(A: *slab_allocator, S: ?*slab, Size: u16, Align: usize,
-    IsMetaSlab: bool) void
-{
-    var PageBegin: usize = undefined;
-    if (IsMetaSlab)
-    {
-        // Forward align 'Offset' to the specified alignment
-        var CurrentPtr: usize = @intCast(usize, @ptrToInt(A.*.Buf)) + A.*.LeftOffset;
-        var Offset: usize = AlignForward(CurrentPtr, Align);
-        Offset -= @intCast(usize, @ptrToInt(A.*.Buf)); // Change to relative offset
-        if (Offset + std.mem.page_size <= A.*.RightOffset)
-        {
-            PageBegin = @intCast(usize, @ptrToInt(A.*.Buf)) + Offset;
-            A.*.LeftOffset = Offset + std.mem.page_size;
-        }
-        else
-        {
-            std.debug.print("Out of mem\n", .{}); // FIXME(cjb)
-            unreachable; // out of mem
-        }
-    }
-    else
-    {
-        // Backward align 'Offset' to the specified alignment
-        var CurrentPtr: usize = @intCast(usize, @ptrToInt(A.*.Buf)) + A.*.RightOffset;
-        var Offset: usize = AlignBackward(CurrentPtr, Align);
-        Offset -= @intCast(usize, @ptrToInt(A.*.Buf)); // Change to relative offset
-        if (Offset - std.mem.page_size > A.*.LeftOffset)
-        {
-            PageBegin = @intCast(usize, @ptrToInt(A.*.Buf)) + Offset - std.mem.page_size;
-            A.*.RightOffset = Offset - std.mem.page_size;
-        }
-        else
-        {
-            std.debug.print("Out of mem\n", .{}); // FIXME(cjb)
-            unreachable; // out of mem
-        }
-    }
-
-    for (@intToPtr([*]u8, PageBegin)[0..std.mem.page_size]) |*Byte| Byte.* = 0;
-
-    S.?.NextSlab = null;
-    S.?.Size = Size;
-    S.?.SlabStart = PageBegin;
-
-    // TODO(cjb): Assert std.mem.page_size divides Size evenly
-    var NumEntries: usize = (std.mem.page_size / Size);
-    S.?.FreeList = @intToPtr(?*slab_block, PageBegin + (NumEntries - 1) * Size); //@ptrCast(?*slab_block, @alignCast(@alignOf(slab_block), Ptr));
-    var Current: ?*slab_block = S.?.FreeList;
-
-    std.debug.assert(NumEntries >= 4);
-    var SlabEntryIndex: isize = @intCast(isize, NumEntries) - 1;
-    while (SlabEntryIndex >= 0) : (SlabEntryIndex -= 1)
-    {
-        Current.?.Next = @intToPtr(?*slab_block, S.?.SlabStart +
-                                     @intCast(usize, SlabEntryIndex) * Size);
-        Current = Current.?.Next;
-    }
-}
-
-fn SlabInit(A: *slab_allocator, S: ?*slab, Size: u16, IsMetaSlab: bool) void {
-    return SlabInitAlign(A, S, Size, @sizeOf(?*anyopaque), IsMetaSlab);
-}
-
-fn SlabAllocNBlocksForward(S: ?*slab, BlockSize: usize, nRequestedBlocks: usize) bool
-{
-    var Result: bool = false;
-    var FreeBlockCount: usize = 0;
-    var CurS: ?*slab = S;
-    while ((CurS != null) and
-           (CurS.?.Size == BlockSize) and
-           (FreeBlockCount < nRequestedBlocks)) : (CurS = CurS.?.NextSlab)
-    {
-        FreeBlockCount += SlabCountContigFreeBlocks(CurS);
-    }
-    if (FreeBlockCount >= nRequestedBlocks)
-    {
-        Result = true;
-        CurS = S;
-        var AllocCount: usize = 0;
-        while (AllocCount < nRequestedBlocks)
-        {
-            if (CurS.?.FreeList != null)
-            {
-                AllocCount += 1;
-                CurS.?.FreeList = CurS.?.FreeList.?.Next;
-                if (AllocCount == (nRequestedBlocks % (std.mem.page_size / BlockSize)))
-                {
-                    CurS = CurS.?.NextSlab;
-                }
-            }
-            else
-            {
-                CurS = CurS.?.NextSlab;
-            }
-        }
-    }
-
-    return Result;
-}
-
-fn SlabCountContigFreeBlocks(S: ?*slab) usize
-{
-    var Result: usize = 0;
-    const BlockSize = S.?.Size;
-    var CurrentBlockPtr = S.?.FreeList;
-    var CurrentBlockLoc: usize = 0;
-    while(CurrentBlockPtr != null) : (CurrentBlockPtr = CurrentBlockPtr.?.Next)
-    {
-        const NextBlockLoc = @ptrToInt(CurrentBlockPtr);
-        if ((CurrentBlockLoc == 0) or
-            (CurrentBlockLoc - BlockSize == NextBlockLoc))
-        {
-            Result += 1;
-        }
-        else
-        {
-            Result = 1;
-        }
-        CurrentBlockLoc = NextBlockLoc;
-    }
-
-    return Result;
-}
-
-fn SlabAllocNBlocks(S: ?*slab, BlockSize: usize, BlockCount: *usize, nRequestedBlocks: usize) ?usize
-{
-    // Base case(s)
-    if (S == null)
-    {
-        return null;
-    }
-    else if (S.?.Size != BlockSize)
-    {
-        return SlabAllocNBlocks(S.?.NextSlab, BlockSize, BlockCount, nRequestedBlocks);
-    }
-
-    var Result = SlabAllocNBlocks(S.?.NextSlab, BlockSize, BlockCount, nRequestedBlocks);
-    var nRemainingBlocks = BlockCount.*;
-    BlockCount.* += SlabCountContigFreeBlocks(S);
-
-    if ((Result == null) and
-        (BlockCount.* >= nRequestedBlocks))
-    {
-        const nBlocksFromThisSlab = nRequestedBlocks - nRemainingBlocks;
-        if (SlabAllocNBlocksForward(S.?.NextSlab, BlockSize, nRemainingBlocks))
-        {
-            var BaseLoc: usize = undefined;
-            var AllocCount: usize = 0;
-            while (AllocCount < nBlocksFromThisSlab) : (AllocCount += 1)
-            {
-                _ = SlabAlloc(S, BlockSize, &BaseLoc); // TODO(cjb): enforce success
-            }
-            Result = BaseLoc;
-        }
-        else
-        {
-            // Reset block count to this slab's count since allocation failed
-            BlockCount.* -= nRemainingBlocks;
-        }
-    }
-
-    return Result;
-}
-
-fn SlabAlloc(S: ?*slab, Size: usize, NewLoc: *usize) bool
-{
-    var Result: bool = true;
-    if ((S.?.Size != Size) or   // Correct size?
-        (S.?.FreeList == null)) // Is slab full?
-    {
-        Result = false;
-    }
-    else
-    {
-        NewLoc.* = @intCast(usize, @ptrToInt(S.?.FreeList));
-        S.?.FreeList = S.?.FreeList.?.Next;
-    }
-    return (Result);
-}
-
-fn SlabFree(S: ?*slab, Location: usize, Size: usize) bool
-{
-    var Result: bool = true;
-    if ((Location < S.?.SlabStart) or (Location >= (S.?.SlabStart + std.mem.page_size)))
-    {
-        Result = false;
-    }
-    else // Are at least within the same slab
-    {
-        const BlockSize = @intCast(usize, S.?.Size);
-
-        // TODO(cjb): Better way to do this...
-        const BlockCountF = @intToFloat(f32, Size) / @intToFloat(f32, BlockSize);
-        var BlockCount = Size / BlockSize;
-        if (BlockCountF - @intToFloat(f32, BlockCount) > 0)
-        {
-            BlockCount += 1;
-        }
-
-        var CurrentSlab = S;
-        var nBlocksFreed: usize = 0;
-        while(nBlocksFreed < BlockCount) : (nBlocksFreed += 1)
-        {
-            // Did cross a page boundry?
-            const BlockLoc: usize = Location + nBlocksFreed * BlockSize;
-            if (BlockLoc >= CurrentSlab.?.SlabStart + std.mem.page_size)
-            {
-                CurrentSlab = CurrentSlab.?.NextSlab;
-                std.debug.assert(CurrentSlab != null);
-            }
-            const TargetBlockIndex = (BlockLoc - CurrentSlab.?.SlabStart) / BlockSize;
-            var NewEntry: *slab_block = @intToPtr(*slab_block,
-                CurrentSlab.?.SlabStart + TargetBlockIndex * BlockSize);
-            NewEntry.*.Next = CurrentSlab.?.FreeList;
-            CurrentSlab.?.FreeList = NewEntry;
-        }
-    }
-    return Result;
-}
-
-fn SlabAllocMeta(A: *slab_allocator) void
-{
-    var SlabMetaData: slab = undefined;
-    SlabInit(A, &SlabMetaData, @sizeOf(slab), true);
-    var SlabLoc: usize = undefined;
-    var DidAlloc: bool = SlabAlloc(&SlabMetaData, @sizeOf(slab), &SlabLoc);
-    std.debug.assert(DidAlloc);
-
-    var NewSlabMeta: ?*slab = @intToPtr(?*slab, SlabLoc);
-    NewSlabMeta.?.* = SlabMetaData;
-    A.*.MetaSlab = NewSlabMeta;
-}
-
-fn ClearScreen() void {
-    std.debug.print("\x1B[2J", .{});
-}
-fn MoveCursor(Row: u32, Col: u32) void {
-    std.debug.print("\x1B[{};{}H", .{Row, Col});
-}
-fn DEBUGSlabVisularizer(arg_A: [*c]slab_allocator) void
-{
-    // TODO(cjb): get stdout writter AND USE IT!!!!
-    // ( also refactor this garbage function )
-
-    const ColorRed = "\x1B[0;31m";
-    const ColorGreen = "\x1B[0;32m";
-    const ColorNormal = "\x1B[0m";
-
-    var A = arg_A;
-    ClearScreen();
-    var CharBuffer: [128]u8 = undefined;
-    for (CharBuffer) |_, Index|
-    {
-        CharBuffer[Index] = 0;
-    }
-    const SlabBoxHeight: u32 = 65;//18;
-    const SlabBoxHorzPad: u32 = 3;
-    const SlabEntryFmtStr = "Block_{0d:0>4}";
-    const TopBorderFmtStr = "*-{0d:0>3} {1d:0>4}-*";
-    var TopBorderCursorXPos: u32 = 1;
-    var TopBorderCursorYPos: u32 = 1;
-    const BottomBorderFmtStr = "*----------*";
-    var BottomBorderCursorXPos: u32 = 1;
-    var BottomBorderCursorYPos: u32 = SlabBoxHeight;
-    const RightBorderFmtStr = "|";
-    var RightBorderCursorXPos = @intCast(u32, BottomBorderFmtStr.len);
-    const LeftBorderFmtStr = "|";
-    var LeftBorderCursorXPos: u32= 1;
-    var LeftBorderCursorYPos: u32= 2;
-    {
-        var SlabIndex: usize = 0;
-        var Slab: [*c]slab = A.*.SlabList;
-        while (Slab != @ptrCast([*c]slab, @alignCast(@import("std").meta.alignment(slab), @intToPtr(?*anyopaque, @as(c_int, 0))))) : (Slab = Slab.*.NextSlab)
-        {
-            // Top border
-            var FmtdCharBufSlice = std.fmt.bufPrint(CharBuffer[0 .. ], TopBorderFmtStr, .{SlabIndex, Slab.*.Size}) catch unreachable;
-            MoveCursor(TopBorderCursorYPos, TopBorderCursorXPos);
-            std.debug.print("{s}", .{FmtdCharBufSlice});
-            TopBorderCursorXPos += @intCast(u32, FmtdCharBufSlice.len) + SlabBoxHorzPad;
-            for (CharBuffer) |_, Index|
-            {
-                CharBuffer[Index] = 0;
-            }
-
-            // Right border
-            FmtdCharBufSlice = std.fmt.bufPrint(CharBuffer[0 .. ], RightBorderFmtStr, .{}) catch unreachable;
-            RightBorderCursorXPos = (TopBorderCursorXPos - SlabBoxHorzPad) - 1;
-
-            {
-                var CurrentRow: u32 = SlabBoxHeight - 1;
-                while (CurrentRow > 1) : (CurrentRow -= 1)
-                {
-                    MoveCursor(CurrentRow, RightBorderCursorXPos);
-                    std.debug.print("{s}", .{FmtdCharBufSlice});
-                }
-            }
-            for (CharBuffer) |_, Index|
-            {
-                CharBuffer[Index] = 0;
-            }
-            FmtdCharBufSlice = std.fmt.bufPrint(CharBuffer[0 .. ], BottomBorderFmtStr, .{}) catch unreachable;
-            MoveCursor(BottomBorderCursorYPos, BottomBorderCursorXPos);
-            std.debug.print("{s}", .{FmtdCharBufSlice});
-            BottomBorderCursorXPos = TopBorderCursorXPos;
-
-            var SlabEntryIndex: usize = 0;
-            var NumEntries: usize = std.mem.page_size / Slab.*.Size;
-            while (SlabEntryIndex < NumEntries) : (SlabEntryIndex +=1 )
-            {
-                std.debug.print("{s}", .{ColorRed});
-                var CurrentBlock: ?*slab_block = Slab.*.FreeList;
-                while(CurrentBlock != null) : (CurrentBlock = CurrentBlock.?.Next)
-                {
-                    if (@ptrToInt(CurrentBlock) == Slab.*.SlabStart + SlabEntryIndex * Slab.*.Size)
-                    {
-                        std.debug.print("{s}", .{ColorGreen});
-                        break;
-                    }
-                }
-                MoveCursor(LeftBorderCursorYPos + @intCast(u32, SlabEntryIndex), LeftBorderCursorXPos + 1);
-                FmtdCharBufSlice = std.fmt.bufPrint(CharBuffer[0 .. ], SlabEntryFmtStr, .{SlabEntryIndex}) catch unreachable;
-                std.debug.print("{s}", .{FmtdCharBufSlice});
-                for (CharBuffer) |_, Index| CharBuffer[Index] = 0;
-            }
-            std.debug.print("{s}", .{ColorNormal});
-
-            // Left border
-            FmtdCharBufSlice = std.fmt.bufPrint(CharBuffer[0 .. ], LeftBorderFmtStr, .{}) catch unreachable;
-            {
-                var CurrentRow: u32 = SlabBoxHeight - 1;
-                while (CurrentRow > 1) : (CurrentRow -= 1) {
-                    MoveCursor(CurrentRow, LeftBorderCursorXPos);
-                    std.debug.print("{s}", .{FmtdCharBufSlice});
-                }
-            }
-            LeftBorderCursorXPos = TopBorderCursorXPos;
-            for (CharBuffer) |_, Index|
-            {
-                CharBuffer[Index] = 0;
-            }
-            SlabIndex += 1;
-        }
-    }
-    MoveCursor(SlabBoxHeight + @as(c_int, 5), @as(c_int, 1)); // MOVE CURSOR SOMEWHERE ELSE!
-}
-
-fn GracieAInit(BackingBuffer: ?[*]u8, BackingBufferLength: usize) slab_allocator
-{
-    var Allocator: slab_allocator = undefined;
-    Allocator.SlabList = null;
-    Allocator.Buf = BackingBuffer;
-    Allocator.BufLen = BackingBufferLength;
-    Allocator.LeftOffset = 0;
-    Allocator.RightOffset = BackingBufferLength;
-    SlabAllocMeta(&Allocator);
-
-    return Allocator;
-}
-
-fn GracieADeinit(A: *slab_allocator) void
-{
-    A.SlabList = null;
-    A.Buf = null;
-    A.BufLen = 0;
-    A.LeftOffset = 0;
-    A.RightOffset = 0;
-    A.MetaSlab = null;
-}
-
-fn GracieAAllocSlice(A: *slab_allocator, Size: usize) []u8
-{
-    var Result: []u8 = @ptrCast([*]u8, GracieAAlloc(A, Size).?)[0..Size];
-    return Result;
-}
-
-// TODO(cjb) record allocation sizes. this needs to happen so "hs_set_allocator" can happen
-fn GracieAAlloc(A: *slab_allocator, RequestedSize: usize) callconv(.C) ?*anyopaque
-{
-    var GoodBucketShift: u8 = 5; // 64
-    while ((RequestedSize > std.math.pow(usize, 2, GoodBucketShift)) and
-           (GoodBucketShift < 10)) // 1024
-    {
-        GoodBucketShift += 1;
-    }
-
-    var BlockSize: u16 = std.math.pow(u16, 2, GoodBucketShift);
-
-    // TODO(cjb): Better way to do this...
-    const BlockCountF = @intToFloat(f32, RequestedSize) / @intToFloat(f32, BlockSize);
-    var BlockCount = RequestedSize / BlockSize;
-    if (BlockCountF - @intToFloat(f32, BlockCount) > 0)
-    {
-        BlockCount += 1;
-    }
-    while (true) // Until allocation is sucessful or out of space
-    {
-        var BlockAccum: usize = 0;
-        var BaseLoc: ?usize = SlabAllocNBlocks(A.*.SlabList, BlockSize, &BlockAccum, BlockCount);
-        if (BaseLoc != null)
-        {
-            return @intToPtr(?*anyopaque, BaseLoc.?);
-        }
-
-        var SlabLoc: usize = undefined;
-        var DidAlloc: bool = SlabAlloc(A.*.MetaSlab, @sizeOf(slab), &SlabLoc);
-        if (!DidAlloc)
-        {
-            SlabAllocMeta(A);
-            if (!SlabAlloc(A.*.MetaSlab, @sizeOf(slab), &SlabLoc))
-            {
-                std.debug.print("Failed to alloc metaslab\n", .{}); // FIXME(cjb)
-                unreachable;
-            }
-        }
-        var NewSlab: ?*slab = @intToPtr(?*slab, SlabLoc);
-        SlabInit(A, NewSlab, BlockSize, false);
-
-        NewSlab.?.NextSlab = A.*.SlabList;
-        A.*.SlabList = NewSlab;
-    }
-}
-
-fn GracieAFreeSlice(A: *slab_allocator, Slice: []u8) void
-{
-    GracieAFree(A, Slice.ptr, Slice.len);
-}
-
-fn GracieAFree(A: *slab_allocator, Ptr: ?*anyopaque, Size: usize) void
-{
-    if (Ptr == null)
-    {
-        return;
-    }
-    var Loc: usize = @intCast(usize, @ptrToInt(Ptr));
-
-    var Slab: ?*slab = A.*.SlabList;
-    while (Slab != null) : (Slab = Slab.?.NextSlab)
-    {
-        if (SlabFree(Slab, Loc, Size))
-        {
-            return;
-        }
-    }
-}
+const array_list = std.ArrayList;
+const slab_allocator = @import("slab_allocator.zig");
 
 const c = @cImport({
     @cInclude("hs.h");
     @cInclude("sempy.h");
 });
 
-pub const gracie_artifact_header = extern struct {
-//    SerializedDatabaseSize: usize,   // NOTE(cjb) there seems to be no diffrence between
-//    DeserializedDatabaseSize: usize, // deserialized and serialized db's sizes
+pub const gracie_artifact_header = extern struct
+{
     DatabaseSize: usize,
     nPatterns: usize,
 };
 
-pub const gracie = extern struct {
+const gracie = struct
+{
     Database: ?*c.hs_database_t,
     Scratch: ?*c.hs_scratch_t,
-    A: slab_allocator,
+    Slaba: slab_allocator,
 
     /// Arr of category ids, where pattern id is the index of the associated category id.
     CategoryIDs: ?[*]c_uint,
-    MatchBuf: ?[*]gracie_match,
-    nMatches: usize,
-    MatchBufCap: usize,
+    MatchList: array_list(gracie_match),
 };
 
-pub const gracie_match = extern struct {
+const gracie_match = struct
+{
     SO: c_ulonglong,
     EO: c_ulonglong,
     CategoryID: c_uint,
@@ -585,7 +75,7 @@ fn GracieErrHandler(Err: anyerror) c_int
 //var GracieCtx: ?*gracie = undefined;
 //fn Bannans(Size: usize) ?*anyopaque
 //{
-//    var Ptr = GracieAAlloc(&GracieCtx.?.A, Size);
+//    var Ptr = GracieAAlloc(&GracieCtx.?.Slaba, Size);
 //    return Ptr;
 //}
 
@@ -596,11 +86,6 @@ export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv
     while (ArtifactPathZ.?[PathLen] != 0) { PathLen += 1; }
     const ArtifactFile = std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{}) catch |Err|
         return GracieErrHandler(Err);
-
-    // File stat
-    const ArtifactStat = ArtifactFile.stat() catch |Err|
-        return GracieErrHandler(Err);
-    std.debug.assert(ArtifactStat.size > @sizeOf(gracie_artifact_header));
 
     // Read artifact header
     var ArtifactHeader: gracie_artifact_header = undefined;
@@ -614,16 +99,19 @@ export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv
         ArtifactHeader.DatabaseSize*3 // Need to store serialized buffer and
                                       // database at same time
         + 0x1000*4) catch |Err| return GracieErrHandler(Err);
-    var SA: slab_allocator = GracieAInit(BackingBuffer.ptr, BackingBuffer.len);
+    var Slaba = slab_allocator.Init(BackingBuffer.ptr, BackingBuffer.len);
+    var Ally = slab_allocator.Allocator(&Slaba);
 
      // Allocate new gracie context and copy alloactor over to it
-    Gracie.?.* = @ptrCast(?*gracie, @alignCast(@alignOf(?*gracie),
-            GracieAAlloc(&SA, @sizeOf(gracie)).?));
-    Gracie.?.*.?.A = SA;
+    Gracie.?.*.? = Ally.create(gracie) catch |Err|
+        return GracieErrHandler(Err);
+    Gracie.?.*.?.Slaba = Slaba;
+    Ally = slab_allocator.Allocator(&Gracie.?.*.?.Slaba); // Allocator at this slaba
 
     // Read serialized database
-    var SerializedBytes = GracieAAllocSlice(&Gracie.?.*.?.A, ArtifactHeader.DatabaseSize);
-    defer GracieAFreeSlice(&Gracie.?.*.?.A, SerializedBytes);
+    var SerializedBytes = Ally.alloc(u8, ArtifactHeader.DatabaseSize) catch |Err|
+        return GracieErrHandler(Err);
+    defer Ally.free(SerializedBytes);
 
     const nDatabaseBytesRead = ArtifactFile.reader().readAll(SerializedBytes) catch |Err|
         return GracieErrHandler(Err);
@@ -636,8 +124,11 @@ export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv
     // hs_error_t hs_set_allocator(hs_alloc_t alloc_func, hs_free_t free_func)
 
     // TODO(cjb): hs_set_misc_allocator()
+    var DatabaseBuf = Ally.alloc(u8, ArtifactHeader.DatabaseSize) catch |Err|
+        return GracieErrHandler(Err);
     Gracie.?.*.?.Database = @ptrCast(*c.hs_database_t,
-        GracieAAlloc(&Gracie.?.*.?.A, ArtifactHeader.DatabaseSize));
+        @alignCast(@alignOf(c.hs_database_t), DatabaseBuf.ptr));
+
     HSLogErrOnFail(c.hs_deserialize_database_at(
             SerializedBytes.ptr, SerializedBytes.len,
             Gracie.?.*.?.Database)) catch |Err|
@@ -649,10 +140,8 @@ export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv
         return GracieErrHandler(Err);
 
     // Initialize category ids
-    var CategoryIDsBuf = GracieAAllocSlice(&Gracie.?.*.?.A,
-        ArtifactHeader.nPatterns * @sizeOf(c_uint));
-    const CategoryIDs = @ptrCast([*]c_uint, @alignCast(@alignOf(c_uint),
-            CategoryIDsBuf.ptr))[0 .. ArtifactHeader.nPatterns];
+    var CategoryIDs = Ally.alloc(c_uint, ArtifactHeader.nPatterns) catch |Err|
+        return GracieErrHandler(Err);
 
     // Read pattern id & category id
     var PatCatIndex: usize = 0;
@@ -668,11 +157,8 @@ export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv
     }
     Gracie.?.*.?.CategoryIDs = @ptrCast(?[*]c_uint, CategoryIDs.ptr);
 
-    // Initialize match buffer
-    Gracie.?.*.?.MatchBuf = @ptrCast(?[*]gracie_match, @alignCast(@alignOf(gracie_match),
-            GracieAAllocSlice(&Gracie.?.*.?.A, 1024))); // 1k outta be enough
-    Gracie.?.*.?.MatchBufCap = 1024 / @sizeOf(gracie_match);
-    Gracie.?.*.?.nMatches = 0;
+    // Initialize match array list
+    Gracie.?.*.?.MatchList = array_list(gracie_match).init(Ally);
 
     // Initialize python plugins
     _ = c.SempyInit();
@@ -690,11 +176,10 @@ fn EventHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
     Ctx: ?*anyopaque) callconv(.C) c_int
 {
     const GraciePtr = @ptrCast(?*gracie, @alignCast(@alignOf(?*gracie), Ctx));
-    if (GraciePtr.?.nMatches <= GraciePtr.?.MatchBufCap)
+    if (GraciePtr.?.MatchList.items.len + 1 > GraciePtr.?.MatchList.capacity)
     {
-        GraciePtr.?.MatchBuf.?[GraciePtr.?.nMatches] =
-            gracie_match{.SO=From, .EO=To, .CategoryID=GraciePtr.?.CategoryIDs.?[ID]};
-        GraciePtr.?.nMatches += 1;
+        GraciePtr.?.MatchList.append(.{.SO=From, .EO=To,
+            .CategoryID=GraciePtr.?.CategoryIDs.?[ID]}) catch unreachable;
         return 0;
     }
     return 1;
@@ -705,21 +190,19 @@ export fn GracieExtract(Gracie: ?*?*gracie, Text: ?[*]u8, nTextBytes: c_uint) ca
     const GraciePtr = Gracie.?.*.?;
 
     // Reset stuff
-    GraciePtr.nMatches = 0;
+    GraciePtr.MatchList.clearRetainingCapacity();
 
     HSLogErrOnFail(c.hs_scan(GraciePtr.Database, Text, nTextBytes, 0,
             GraciePtr.Scratch, EventHandler, GraciePtr)) catch |Err|
         return GracieErrHandler(Err);
 
-    var MatchIndex: usize = 0;
-    while (MatchIndex < GraciePtr.nMatches) : (MatchIndex += 1)
+    for (GraciePtr.MatchList.items) |M|
     {
-        const M = GraciePtr.MatchBuf.?[MatchIndex];
         const TextSOPtr = @intToPtr(?[*]const u8, @ptrToInt(Text) + @intCast(usize, M.SO));
         _ = c.SempyRunModule(TextSOPtr, @intCast(usize, M.EO - M.SO), M.CategoryID);
     }
 
-//    DEBUGSlabVisularizer(&GraciePtr.A);
+    slab_allocator.DEBUGSlabVisularizer(&GraciePtr.Slaba);
 
     return GRACIE_SUCCESS;
 }
@@ -728,7 +211,7 @@ export fn GracieDeinit(Gracie: ?*?*gracie) callconv(.C) c_int {
     _ = c.hs_free_scratch(Gracie.?.*.?.Scratch);
     _ = c.SempyDeinit();
 
-    std.heap.page_allocator.free(Gracie.?.*.?.A.Buf.?[0 .. Gracie.?.*.?.A.BufLen]);
+    std.heap.page_allocator.free(Gracie.?.*.?.Slaba.Buf.?[0 .. Gracie.?.*.?.Slaba.BufLen]);
 
     return GRACIE_SUCCESS;
 }
@@ -742,8 +225,4 @@ test "init then deinit"
     try std.testing.expect(
         GracieDeinit(&GracieCtx) ==
         GRACIE_SUCCESS);
-}
-
-test "embededing python"
-{
 }
