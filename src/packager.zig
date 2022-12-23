@@ -23,10 +23,10 @@ pub fn main() !void {
     if (!ArgIter.skip()) {
         unreachable;
     }
-    const PatternsPathZ = try ArgIter.next(PA) orelse unreachable;
+    const PatternsPathZ = ArgIter.next();
 
     // Open file
-    ConfFile = try std.fs.cwd().openFile(PatternsPathZ, .{});
+    ConfFile = try std.fs.cwd().openFile(PatternsPathZ.?, .{});
 
     // Parse file
     var Parser = std.json.Parser.init(PA, false);
