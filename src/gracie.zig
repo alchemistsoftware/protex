@@ -18,6 +18,7 @@ const gracie = struct
     Database: ?*c.hs_database_t,
     Scratch: ?*c.hs_scratch_t,
     Slaba: slab_allocator,
+    BackingBuffer: []u8,
 
     /// Arr of category ids, where pattern id is the index of the associated category id.
     CategoryIDs: ?[*]c_uint,
@@ -99,13 +100,14 @@ export fn GracieInit(Gracie: ?*?*gracie, ArtifactPathZ: ?[*:0]const u8) callconv
         ArtifactHeader.DatabaseSize*3 // Need to store serialized buffer and
                                       // database at same time
         + 0x1000*4) catch |Err| return GracieErrHandler(Err);
-    var Slaba = slab_allocator.Init(BackingBuffer.ptr, BackingBuffer.len);
+    var Slaba = slab_allocator.Init(BackingBuffer);
     var Ally = slab_allocator.Allocator(&Slaba);
 
      // Allocate new gracie context and copy alloactor over to it
     Gracie.?.*.? = Ally.create(gracie) catch |Err|
         return GracieErrHandler(Err);
     Gracie.?.*.?.Slaba = Slaba;
+    Gracie.?.*.?.BackingBuffer = BackingBuffer;
     Ally = slab_allocator.Allocator(&Gracie.?.*.?.Slaba); // Allocator at this slaba
 
     // Read serialized database
@@ -211,7 +213,7 @@ export fn GracieDeinit(Gracie: ?*?*gracie) callconv(.C) c_int {
     _ = c.hs_free_scratch(Gracie.?.*.?.Scratch);
     _ = c.SempyDeinit();
 
-    std.heap.page_allocator.free(Gracie.?.*.?.Slaba.Buf.?[0 .. Gracie.?.*.?.Slaba.BufLen]);
+    std.heap.page_allocator.free(Gracie.?.*.?.BackingBuffer);
 
     return GRACIE_SUCCESS;
 }

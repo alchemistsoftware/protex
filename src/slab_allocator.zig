@@ -1,27 +1,38 @@
+//!
+//! Slab allocator TODO(cjb): doc
+//!
+
 const std = @import("std");
 
 const allocator = std.mem.Allocator;
 const self = @This();
 
-Buf: ?[*]u8,
-BufLen: usize,
+// Backing buffer start location
+BufferStart: usize,
+
+// Tracks metaslabs advancing 1 page to the right everytime a new slab is required.
 LeftOffset: usize,
+
+// Tracks memory allocations advancing 1 page to the left for each new slab.
 RightOffset: usize,
+
+// Linked list of slabs ordered left to right
 SlabList: ?*slab,
+
+// Slab storing other slabs
 MetaSlab: ?*slab,
 
-const slab_block = extern struct
+const slab_block = struct
 {
     Next: ?*slab_block,
 };
 
-const slab = extern struct
+const slab = struct
 {
     NextSlab: ?*slab,
     FreeList: ?*slab_block,
     SlabStart: usize,
     Size: u16,
-    Padding: u16,
 };
 
 fn IsPowerOfTwo(X: usize) bool
@@ -72,12 +83,12 @@ fn SlabInitAlign(A: *self, S: ?*slab, Size: u16, Align: usize,
     if (IsMetaSlab)
     {
         // Forward align 'Offset' to the specified alignment
-        var CurrentPtr: usize = @intCast(usize, @ptrToInt(A.*.Buf)) + A.*.LeftOffset;
+        var CurrentPtr: usize = A.BufferStart + A.*.LeftOffset;
         var Offset: usize = AlignForward(CurrentPtr, Align);
-        Offset -= @intCast(usize, @ptrToInt(A.*.Buf)); // Change to relative offset
-        if (Offset + std.mem.page_size <= A.*.RightOffset)
+        Offset -= A.BufferStart; // Change to relative offset
+        if (Offset + std.mem.page_size <= A.RightOffset)
         {
-            PageBegin = @intCast(usize, @ptrToInt(A.*.Buf)) + Offset;
+            PageBegin = A.BufferStart + Offset;
             A.*.LeftOffset = Offset + std.mem.page_size;
         }
         else
@@ -89,12 +100,12 @@ fn SlabInitAlign(A: *self, S: ?*slab, Size: u16, Align: usize,
     else
     {
         // Backward align 'Offset' to the specified alignment
-        var CurrentPtr: usize = @intCast(usize, @ptrToInt(A.*.Buf)) + A.*.RightOffset;
+        var CurrentPtr: usize = A.BufferStart + A.*.RightOffset;
         var Offset: usize = AlignBackward(CurrentPtr, Align);
-        Offset -= @intCast(usize, @ptrToInt(A.*.Buf)); // Change to relative offset
+        Offset -= A.BufferStart; // Change to relative offset
         if (Offset - std.mem.page_size > A.*.LeftOffset)
         {
-            PageBegin = @intCast(usize, @ptrToInt(A.*.Buf)) + Offset - std.mem.page_size;
+            PageBegin = A.BufferStart + Offset - std.mem.page_size;
             A.*.RightOffset = Offset - std.mem.page_size;
         }
         else
@@ -112,7 +123,7 @@ fn SlabInitAlign(A: *self, S: ?*slab, Size: u16, Align: usize,
 
     // TODO(cjb): Assert std.mem.page_size divides Size evenly
     var NumEntries: usize = (std.mem.page_size / Size);
-    S.?.FreeList = @intToPtr(?*slab_block, PageBegin + (NumEntries - 1) * Size); //@ptrCast(?*slab_block, @alignCast(@alignOf(slab_block), Ptr));
+    S.?.FreeList = @intToPtr(?*slab_block, PageBegin + (NumEntries - 1) * Size);
     var Current: ?*slab_block = S.?.FreeList;
 
     var SlabEntryIndex: isize = @intCast(isize, NumEntries) - 1;
@@ -215,7 +226,8 @@ fn SlabAllocNBlocks(S: ?*slab, BlockSize: usize, BlockCount: *usize, nRequestedB
             var AllocCount: usize = 0;
             while (AllocCount < nBlocksFromThisSlab) : (AllocCount += 1)
             {
-                _ = SlabAlloc(S, BlockSize, &BaseLoc); // TODO(cjb): enforce success
+                const DidAquireBlock = SlabAlloc(S, BlockSize, &BaseLoc);
+                std.debug.assert(DidAquireBlock);
             }
             Result = BaseLoc;
         }
@@ -261,11 +273,11 @@ fn Alloc(Ctx: *anyopaque, RequestedSize: usize, Log2Align: u8, _: usize) ?[*]u8
         }
 
         var SlabLoc: usize = undefined;
-        var DidAlloc: bool = SlabAlloc(Self.*.MetaSlab, @sizeOf(slab), &SlabLoc);
+        var DidAlloc: bool = SlabAlloc(Self.MetaSlab, @sizeOf(slab), &SlabLoc);
         if (!DidAlloc)
         {
             SlabAllocMeta(Self);
-            if (!SlabAlloc(Self.*.MetaSlab, @sizeOf(slab), &SlabLoc))
+            if (!SlabAlloc(Self.MetaSlab, @sizeOf(slab), &SlabLoc))
             {
                 std.debug.print("Failed to alloc metaslab\n", .{}); // FIXME(cjb)
                 unreachable;
@@ -354,17 +366,24 @@ fn SlabFree(S: ?*slab, Location: usize, Size: usize) bool
     return true;
 }
 
-fn SlabAllocMeta(A: *self) void
+/// Allocate page for new slab which houses the meta slab itself as well as all other slabs.
+fn SlabAllocMeta(Self: *self) void
 {
-    var SlabMetaData: slab = undefined;
-    SlabInit(A, &SlabMetaData, @sizeOf(slab), true);
-    var SlabLoc: usize = undefined;
-    var DidAlloc: bool = SlabAlloc(&SlabMetaData, @sizeOf(slab), &SlabLoc);
+    // Initialize slab
+    var TmpMetaSlab: slab = undefined;
+    SlabInit(Self, &TmpMetaSlab, @sizeOf(slab), true);
+
+    // Allocate space for the metaslab itself
+    var BlockLoc: usize = undefined;
+    var DidAlloc: bool = SlabAlloc(&TmpMetaSlab, @sizeOf(slab), &BlockLoc);
     std.debug.assert(DidAlloc);
 
-    var NewSlabMeta: ?*slab = @intToPtr(?*slab, SlabLoc);
-    NewSlabMeta.?.* = SlabMetaData;
-    A.*.MetaSlab = NewSlabMeta;
+    // Store metaslab in first block of new slab
+    var NewMetaSlab = @intToPtr(?*slab, BlockLoc);
+    NewMetaSlab.?.* = TmpMetaSlab;
+
+    // Update metaslab ptr
+    Self.MetaSlab = NewMetaSlab;
 }
 
 fn ClearScreen() void {
@@ -405,11 +424,11 @@ pub fn DEBUGSlabVisularizer(arg_A: *self) void
     var LeftBorderCursorYPos: u32= 2;
     {
         var SlabIndex: usize = 0;
-        var Slab: [*c]slab = A.*.SlabList;
-        while (Slab != @ptrCast([*c]slab, @alignCast(@import("std").meta.alignment(slab), @intToPtr(?*anyopaque, @as(c_int, 0))))) : (Slab = Slab.*.NextSlab)
+        var Slab: ?*slab = A.*.SlabList;
+        while (Slab != null) : (Slab = Slab.?.NextSlab)
         {
             // Top border
-            var FmtdCharBufSlice = std.fmt.bufPrint(CharBuffer[0 .. ], TopBorderFmtStr, .{SlabIndex, Slab.*.Size}) catch unreachable;
+            var FmtdCharBufSlice = std.fmt.bufPrint(CharBuffer[0 .. ], TopBorderFmtStr, .{SlabIndex, Slab.?.Size}) catch unreachable;
             MoveCursor(TopBorderCursorYPos, TopBorderCursorXPos);
             std.debug.print("{s}", .{FmtdCharBufSlice});
             TopBorderCursorXPos += @intCast(u32, FmtdCharBufSlice.len) + SlabBoxHorzPad;
@@ -440,14 +459,14 @@ pub fn DEBUGSlabVisularizer(arg_A: *self) void
             BottomBorderCursorXPos = TopBorderCursorXPos;
 
             var SlabEntryIndex: usize = 0;
-            var NumEntries: usize = std.mem.page_size / Slab.*.Size;
+            var NumEntries: usize = std.mem.page_size / Slab.?.Size;
             while (SlabEntryIndex < NumEntries) : (SlabEntryIndex +=1 )
             {
                 std.debug.print("{s}", .{ColorRed});
-                var CurrentBlock: ?*slab_block = Slab.*.FreeList;
+                var CurrentBlock: ?*slab_block = Slab.?.FreeList;
                 while(CurrentBlock != null) : (CurrentBlock = CurrentBlock.?.Next)
                 {
-                    if (@ptrToInt(CurrentBlock) == Slab.*.SlabStart + SlabEntryIndex * Slab.*.Size)
+                    if (@ptrToInt(CurrentBlock) == Slab.?.SlabStart + SlabEntryIndex * Slab.?.Size)
                     {
                         std.debug.print("{s}", .{ColorGreen});
                         break;
@@ -483,7 +502,7 @@ pub fn DEBUGSlabVisularizer(arg_A: *self) void
 fn Resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_size: usize, ra: usize) bool {
     if (true)
     {
-        std.debug.print("Resize hasn't been written yet.... is it time? :)\n", .{});
+        std.debug.print("Resize hasn't been written yet.... is it time?\n", .{});
         unreachable;
     }
 
@@ -495,13 +514,12 @@ fn Resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_size: usize, ra: usize)
     return false;
 }
 
-pub fn Init(BackingBuffer: ?[*]u8, BackingBufferLength: usize) self
+pub fn Init(BackingBuffer: []u8) self
 {
     return .{
-        .Buf = BackingBuffer,
-        .BufLen = BackingBufferLength,
+        .BufferStart = @ptrToInt(BackingBuffer.ptr),
         .LeftOffset = 0,
-        .RightOffset = BackingBufferLength,
+        .RightOffset = BackingBuffer.len,
         .SlabList = null,
         .MetaSlab = null,
     };
@@ -526,7 +544,7 @@ pub fn Allocator(Self: *self) allocator {
 test "SlabAllocator"
 {
     var Buf: [0x1000*3]u8 = undefined;
-    var Slaba = self.Init(&Buf, Buf.len);
+    var Slaba = self.Init(Buf[0..]);
     var Ally = self.Allocator(&Slaba);
     var Mem = try Ally.alloc(u8, 512);
     Ally.free(Mem);
