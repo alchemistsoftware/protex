@@ -5,28 +5,19 @@ pub fn build(B: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const Mode = B.standardReleaseOptions();
 
-    const Sempy = B.addSharedLibrary("sempy", null, B.version(0, 0, 1));
-    Sempy.addCSourceFiles(&.{"src/sempy.c",}, &.{"-g",});
-    Sempy.setBuildMode(Mode);
-    Sempy.setOutputDir("./lib");
-    Sempy.addIncludePath("/usr/include/python3.8");
-    Sempy.linkSystemLibrary("python3.8");
-    Sempy.linkSystemLibrary("crypt");
-    Sempy.linkSystemLibrary("pthread");
-    Sempy.linkSystemLibrary("dl");
-    Sempy.linkSystemLibrary("util");
-    Sempy.linkSystemLibrary("m");
-    Sempy.linkLibC();
-    Sempy.install();
-
     const Gracie = B.addSharedLibrary("gracie", "src/gracie.zig", B.version(0, 0, 1));
     Gracie.setBuildMode(Mode);
     Gracie.setOutputDir("./lib");
-    Gracie.addIncludePath("/usr/include/python3.8");
+    Gracie.addIncludePath("/usr/include/python3.11");
     Gracie.addIncludePath("/usr/include/hs/");
     Gracie.addIncludePath("./src");
+    Gracie.addIncludePath("/usr/include/python3.11");
+    Gracie.linkSystemLibrary("python3.11");
+    Gracie.linkSystemLibrary("pthread");
+    Gracie.linkSystemLibrary("dl");
+    Gracie.linkSystemLibrary("util");
+    Gracie.linkSystemLibrary("m");
     Gracie.linkSystemLibrary("hs_runtime");
-    Gracie.linkLibrary(Sempy);
     Gracie.linkLibC();
     Gracie.install();
 
