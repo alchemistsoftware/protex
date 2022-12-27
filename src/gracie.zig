@@ -1,18 +1,15 @@
 const std = @import("std");
 const array_list = std.ArrayList;
 const slab_allocator = @import("slab_allocator.zig");
+const common = @import("common.zig");
 const sempy = @import("sempy.zig");
 const c = @cImport({
     @cInclude("hs.h");
 });
 
-const self = @This();
+const gracie_artifact_header = common.gracie_artifact_header;
 
-const gracie_artifact_header = struct
-{
-    DatabaseSize: usize,
-    nPatterns: usize,
-};
+const self = @This();
 
 const gracie_match = struct
 {
@@ -117,7 +114,7 @@ pub fn Init(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_in
 
     // Setup slab allocator TODO(cjb): Make slab allocator alloc pages
     var BackingBuffer = std.heap.page_allocator.alloc(u8,
-        ArtifactHeader.DatabaseSize*3 // Need to store serialized buffer and
+        1024*3//ArtifactHeader.DatabaseSize*3 // Need to store serialized buffer and
                                       // database at same time
         + 0x1000*4) catch |Err| return ErrHandler(Err);
     var Slaba = slab_allocator.Init(BackingBuffer);
@@ -131,13 +128,13 @@ pub fn Init(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_in
     Ally = slab_allocator.Allocator(&Self.?.*.?.Slaba); // Allocator at this slaba
 
     // Read serialized database
-    var SerializedBytes = Ally.alloc(u8, ArtifactHeader.DatabaseSize) catch |Err|
+    var SerializedBytes = Ally.alloc(u8, 1024) catch |Err|//ArtifactHeader.DatabaseSize) catch |Err|
         return ErrHandler(Err);
     defer Ally.free(SerializedBytes);
 
     const nDatabaseBytesRead = ArtifactFile.reader().readAll(SerializedBytes) catch |Err|
         return ErrHandler(Err);
-    std.debug.assert(nDatabaseBytesRead == ArtifactHeader.DatabaseSize);
+    std.debug.assert(nDatabaseBytesRead == 1024);//ArtifactHeader.DatabaseSize);
 
     //var HSAlloc: c.hs_alloc_t = Bannans;
     //var HSFree: c.hs_free_t = Bannans2;
@@ -146,7 +143,7 @@ pub fn Init(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_in
     // hs_error_t hs_set_allocator(hs_alloc_t alloc_func, hs_free_t free_func)
 
     // TODO(cjb): hs_set_misc_allocator()
-    var DatabaseBuf = Ally.alloc(u8, ArtifactHeader.DatabaseSize) catch |Err|
+    var DatabaseBuf = Ally.alloc(u8, 1024) catch |Err| //ArtifactHeader.DatabaseSize) catch |Err|
         return ErrHandler(Err);
     Self.?.*.?.Database = @ptrCast(*c.hs_database_t,
         @alignCast(@alignOf(c.hs_database_t), DatabaseBuf.ptr));
@@ -162,12 +159,12 @@ pub fn Init(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_in
         return ErrHandler(Err);
 
     // Initialize category ids
-    var CategoryIDs = Ally.alloc(c_uint, ArtifactHeader.nPatterns) catch |Err|
+    var CategoryIDs = Ally.alloc(c_uint, 1024) catch |Err| //ArtifactHeader.nPatterns) catch |Err|
         return ErrHandler(Err);
 
     // Read pattern id & category id
     var PatCatIndex: usize = 0;
-    while (PatCatIndex < ArtifactHeader.nPatterns) : (PatCatIndex += 1)
+    while (PatCatIndex < 1024) : (PatCatIndex += 1)//ArtifactHeader.nPatterns) : (PatCatIndex += 1)
     {
         var IDBuf = ArtifactFile.reader().readBytesNoEof(4) catch |Err|
             return ErrHandler(Err);
