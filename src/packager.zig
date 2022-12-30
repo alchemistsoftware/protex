@@ -22,7 +22,6 @@ const array_list = std.ArrayList;
 //     |---Extraction context header----|
 //     | N extractor name bytes (usize) |
 //     | N database bytes (usize)       |
-//     | N patterns (usize)             |
 //     | N categories (usize)           |
 //     |----Extraction context data-----|
 //     | Country (2 bytes)              |
@@ -34,6 +33,7 @@ const array_list = std.ArrayList;
 //         |--------Category header---------|
 //         | N category name bytes (usize)  |
 //         | N plugin source bytes (usize)  |
+//         | N patterns (usize)             |
 //         |---------Category data----------|
 //         | Category name (nbytes)         |
 //         | Plugin source (nBytes)         |
@@ -205,7 +205,6 @@ pub fn main() !void
         const DefHeader = common.gracie_extractor_def_header{
             .nExtractorNameBytes = ExtractorName.String.len,
             .DatabaseSize = nSerializedDBBytes,
-            .nPatterns = PatternsZ.items.len,
             .nCategories = Categories.Array.items.len,
         };
         try ArtiF.writer().writeStruct(DefHeader);
@@ -216,22 +215,17 @@ pub fn main() !void
 
         for (Categories.Array.items) |Gory, GoryIndex|
         {
+            const Patterns = Gory.Object.get("patterns") orelse unreachable;
             const GoryName = Gory.Object.get("name") orelse unreachable;
             const GoryHeader = common.gracie_extractor_cat_header{
                 .nCategoryNameBytes = GoryName.String.len,
                 .nPyPluginSourceBytes = Plugins.items[GoryIndex].len,
+                .nPatterns = Patterns.Array.items.len,
             };
 
             try ArtiF.writer().writeStruct(GoryHeader);
             try ArtiF.writeAll(GoryName.String);
             try ArtiF.writeAll(Plugins.items[GoryIndex]);
         }
-
-        //for (IDs) |ID|
-        //{
-        //    _ = try AritF.write(@ptrCast([*]const u8, &ID)[0..@sizeOf(c_uint)]);
-        //    _ = try AritF.write(@ptrCast([*]const u8,
-        //            &@intCast(c_uint, CategoryIndex))[0..@sizeOf(c_uint)]);
-        //}
     }
 }
