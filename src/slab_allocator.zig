@@ -7,8 +7,8 @@ const std = @import("std");
 const allocator = std.mem.Allocator;
 const self = @This();
 
-// Backing buffer start location
-BufferStart: usize,
+// Backing buffer
+Buffer: []u8,
 
 // Tracks metaslabs advancing 1 page to the right everytime a new slab is required.
 LeftOffset: usize,
@@ -83,12 +83,12 @@ fn SlabInitAlign(A: *self, S: ?*slab, Size: u16, Align: usize,
     if (IsMetaSlab)
     {
         // Forward align 'Offset' to the specified alignment
-        var CurrentPtr: usize = A.BufferStart + A.*.LeftOffset;
+        var CurrentPtr: usize = @ptrToInt(A.Buffer.ptr) + A.*.LeftOffset;
         var Offset: usize = AlignForward(CurrentPtr, Align);
-        Offset -= A.BufferStart; // Change to relative offset
+        Offset -= @ptrToInt(A.Buffer.ptr); // Change to relative offset
         if (Offset + std.mem.page_size <= A.RightOffset)
         {
-            PageBegin = A.BufferStart + Offset;
+            PageBegin = @ptrToInt(A.Buffer.ptr) + Offset;
             A.*.LeftOffset = Offset + std.mem.page_size;
         }
         else
@@ -100,12 +100,12 @@ fn SlabInitAlign(A: *self, S: ?*slab, Size: u16, Align: usize,
     else
     {
         // Backward align 'Offset' to the specified alignment
-        var CurrentPtr: usize = A.BufferStart + A.*.RightOffset;
+        var CurrentPtr: usize = @ptrToInt(A.Buffer.ptr) + A.*.RightOffset;
         var Offset: usize = AlignBackward(CurrentPtr, Align);
-        Offset -= A.BufferStart; // Change to relative offset
+        Offset -= @ptrToInt(A.Buffer.ptr); // Change to relative offset
         if (Offset - std.mem.page_size > A.*.LeftOffset)
         {
-            PageBegin = A.BufferStart + Offset - std.mem.page_size;
+            PageBegin = @ptrToInt(A.Buffer.ptr) + Offset - std.mem.page_size;
             A.*.RightOffset = Offset - std.mem.page_size;
         }
         else
@@ -517,7 +517,7 @@ fn Resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_size: usize, ra: usize)
 pub fn Init(BackingBuffer: []u8) self
 {
     return .{
-        .BufferStart = @ptrToInt(BackingBuffer.ptr),
+        .Buffer = BackingBuffer,
         .LeftOffset = 0,
         .RightOffset = BackingBuffer.len,
         .SlabList = null,

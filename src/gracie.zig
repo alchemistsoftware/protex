@@ -1,41 +1,64 @@
 const std = @import("std");
-const array_list = std.ArrayList;
 const slab_allocator = @import("slab_allocator.zig");
+const common = @import("common.zig");
 const sempy = @import("sempy.zig");
 const c = @cImport({
     @cInclude("hs.h");
 });
 
+const debug = std.debug;
+const allocator = std.mem.Allocator;
+const array_list = std.ArrayList;
+
 const self = @This();
 
-const gracie_artifact_header = struct
-{
-    DatabaseSize: usize,
-    nPatterns: usize,
-};
-
+// NOTE(cjb): Keep in mind this will need to be exposed at some point or another.
 const gracie_match = struct
 {
     SO: c_ulonglong,
     EO: c_ulonglong,
-    CategoryID: c_uint,
+    CatID: c_uint,
 };
+
+const loaded_py_module = struct
+{
+//    ModName: []u8,
+    CatName: []u8,
+    CatID: c_uint,
+};
+
+// TODO(cjb): Loaded extractors buf...
 
 Database: ?*c.hs_database_t,
 Scratch: ?*c.hs_scratch_t,
-Slaba: slab_allocator,
-BackingBuffer: []u8,
+Ally: allocator,
 
-/// Arr of category ids, where pattern id is the index of the associated category id.
-CategoryIDs: ?[*]c_uint,
-MatchList: array_list(gracie_match),
+//ManagedVT: gracie_managed_vtable,
 
-pub const GRACIE_SUCCESS: c_int = 0;        // Call was executed successfully
-pub const GRACIE_INVALID: c_int = -1;       // Bad paramater was passed
-pub const GRACIE_UNKNOWN_ERROR: c_int = -2; // Unhandled internal error
-pub const GRACIE_NOMEM: c_int = -3;         // A memory allocation failed
+/// List of category ids, where pattern id is the index of the associated category id.
+CatIDs: array_list(c_uint),
+MatchList: array_list(gracie_match), // TODO(cjb): Benchmark init. of this data strcuture within
+                                     // extract call instead of GracieInit
+LoadedPyModules: array_list(loaded_py_module),
+//
+// Possible status codes that may be returned during gracie calls.
+//
 
-fn HSStatusToErr(ReturnCode: c_int) !void
+/// Call was executed successfully
+pub const GRACIE_SUCCESS: c_int = 0;
+
+/// Bad paramater was passed
+pub const GRACIE_INVALID: c_int = -1;
+
+/// Unhandled internal error
+pub const GRACIE_UNKNOWN_ERROR: c_int = -2;
+
+/// A memory allocation failed
+pub const GRACIE_NOMEM: c_int = -3;
+
+/// Maps hyperscan status codes to an eqv. error. This way we may take advantage of zig's err
+/// handling system.
+fn HSCodeToErr(ReturnCode: c_int) !void
 {
     if (ReturnCode != c.HS_SUCCESS)
     {
@@ -58,7 +81,8 @@ fn HSStatusToErr(ReturnCode: c_int) !void
     }
 }
 
-fn ErrHandler(Err: anyerror) c_int
+/// Convert zig errs to status code.
+fn ErrToCode(Err: anyerror) c_int
 {
     std.log.err("{}", .{Err});
     switch(Err)
@@ -85,134 +109,216 @@ fn ErrHandler(Err: anyerror) c_int
     }
 }
 
-// HACK(cjb): Fine? ( on the upside could ommit throwing ?*?*gracie ptrs all over )
-//  Introduced to set hs_allocator
-//var GracieCtx: ?*gracie = undefined;
-//fn Bannans(Size: usize) ?*anyopaque
+//const gracie_free_fn = *const fn(Ptr: ?*anyopaque) callconv(.C) void;
+//const gracie_resize_fn = *const fn(Ptr: ?*anyopaque, Size: usize) callconv(.C) ?*anyopaque;
+//
+//const gracie_managed_vtable = extern struct
 //{
-//    var Ptr = GracieAAlloc(&GracieCtx.?.Slaba, Size);
-//    return Ptr;
+//    Alloc: gracie_alloc_fn,
+//    Free: gracie_free_fn,
+//    Resize: gracie_resize_fn,
+//};
+
+//
+// Allocator compatable vtable functions for calling c memory procedures *mostly* ripped straight
+// from the zig std library.
+//
+
+//fn ManagedAlloc(Ctx: *anyopaque, Len: usize, Log2PtrAlign: u8, RetAddr: usize) ?[*]u8
+//{
+//    _ = RetAddr;
+//    debug.assert(Log2PtrAlign <= comptime std.math.log2_int(usize, @alignOf(std.c.max_align_t)));
+//    const VT = @ptrCast(*gracie_managed_vtable, @alignCast(@alignOf(gracie_managed_vtable), Ctx));
+//    return @ptrCast(?[*]u8, VT.Alloc(Len));
 //}
+//
+//fn GetRecordPtr(Buf: []u8) *align(1) usize
+//{
+//    return @intToPtr(*align(1) usize, @ptrToInt(Buf.ptr) + Buf.len);
+//}
+//
+//fn ManagedResize(Ctx: *anyopaque, Buf: []u8, Log2OldAlign: u8, NewLen: usize, RetAddr: usize) ?[*]u8
+//{
+//    _ = Log2OldAlign;
+//    _ = RetAddr;
+//    const VT = @ptrCast(*gracie_managed_vtable, @alignCast(@alignOf(gracie_managed_vtable), Ctx));
+//
+//    return @ptrCast(?[*]u8, VT.Resize(Buf.ptr, NewLen));
+//    assert(new_ptr == @intToPtr(*anyopaque, root_addr));
+//    getRecordPtr(buf.ptr[0..new_size]).* = root_addr;
+//}
+//
+//fn ManagedFree(Ctx: *anyopaque, Buf: []u8, Log2OldAlign: u8, NewLen: usize, RetAddr: usize) void
+//{
+//    _ = Log2OldAlign;
+//    _ = RetAddr;
+//    _ = NewLen;
+//    const VT = @ptrCast(*gracie_managed_vtable, @alignCast(@alignOf(gracie_managed_vtable), Ctx));
+//    VT.Free(Buf.ptr);
+//}
+//export fn GracieManagedInit(Ctx: ?*?*anyopaque, Alloc: gracie_alloc_fn, Free: gracie_free_fn,
+//    Resize: gracie_resize_fn, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
+//{
+//    var Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
+//
+//    // Stack allocator from stack vtable
+//    var SVT = gracie_managed_vtable{
+//        .Alloc = Alloc,
+//        .Resize= Resize,
+//        .Free = Free,
+//    };
+//    var SAlly = allocator{
+//        .ptr = @ptrCast(*anyopaque, &SVT),
+//        .vtable = &.{
+//            .alloc = ManagedAlloc,
+//            .resize = ManagedResize,
+//            .free = ManagedFree,
+//        },
+//    };
+//
+//    // Perform managed alloc storing result of self.Init in allocated slot.
+//    var SelfBytes = ManagedAlloc(&SVT, @sizeOf(self), @sizeOf(*void * 2), 0);
+//    Self.?.* = @ptrCast(?*self, @alignCast(@alignOf(self), SelfBytes));
+//    Self.?.* orelse return GRACIE_NOMEM; // Check to see if actually alloc'd.
+//    Self.?.*.?.* = Init(Ctx, SAlly, ArtifactPathZ) catch |Err|
+//        return ErrToCode(Err);
+//
+//    // Copy stack allocated vtable to new Self's vtable then update stack allocated allocator's
+//    //  pointer to point to Self's vtable (just copied) instead of the original.
+//    Self.ManagedVT = SVT;
+//    Self.Ally.ptr = &Self.ManagedVT;
+//
+//    return GRACIE_SUCCESS;
+//}
+
 export fn GracieInit(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
 {
-    return Init(Ctx, ArtifactPathZ);
+    var Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
+    var Ally = std.heap.c_allocator;
+    Self.?.* = Ally.create(self) catch |Err|
+        return ErrToCode(Err);
+    Self.?.*.?.* = Init(Ally, ArtifactPathZ) catch |Err|
+        return ErrToCode(Err);
+    return GRACIE_SUCCESS;
 }
 
-pub fn Init(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
+pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
 {
-    var Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
+    var Self: self = undefined;
 
+    // Copy alloactor
+    Self.Ally = Ally;
+
+    // Initialize sempy ( this must be initialized before any sempy fns are called. )
+    try sempy.Init();
+
+    // Initialize list to keep track of loaded sempy modules.
+    Self.LoadedPyModules = array_list(loaded_py_module).init(Self.Ally);
+
+//
+// Deserialize artifact
+//
     // Open artifact file
     var PathLen: usize = 0;
     while (ArtifactPathZ.?[PathLen] != 0) { PathLen += 1; }
-    const ArtifactFile = std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{}) catch |Err|
-        return ErrHandler(Err);
+    const ArtiF = try std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{});
 
     // Read artifact header
-    var ArtifactHeader: gracie_artifact_header = undefined;
-    const nHeaderBytesRead = ArtifactFile.read(
-        @ptrCast([*]u8, &ArtifactHeader)[0..@sizeOf(gracie_artifact_header)]) catch |Err|
-        return ErrHandler(Err);
-    std.debug.assert(nHeaderBytesRead == @sizeOf(gracie_artifact_header));
+    const ArtiHeader = try ArtiF.reader().readStruct(common.gracie_arti_header);
 
-    // Setup slab allocator TODO(cjb): Make slab allocator alloc pages
-    var BackingBuffer = std.heap.page_allocator.alloc(u8,
-        ArtifactHeader.DatabaseSize*3 // Need to store serialized buffer and
-                                      // database at same time
-        + 0x1000*4) catch |Err| return ErrHandler(Err);
-    var Slaba = slab_allocator.Init(BackingBuffer);
-    var Ally = slab_allocator.Allocator(&Slaba);
-
-     // Allocate new gracie context and copy alloactor over to it
-    Self.?.*.? = Ally.create(self) catch |Err|
-        return ErrHandler(Err);
-    Self.?.*.?.Slaba = Slaba;
-    Self.?.*.?.BackingBuffer = BackingBuffer;
-    Ally = slab_allocator.Allocator(&Self.?.*.?.Slaba); // Allocator at this slaba
-
-    // Read serialized database
-    var SerializedBytes = Ally.alloc(u8, ArtifactHeader.DatabaseSize) catch |Err|
-        return ErrHandler(Err);
-    defer Ally.free(SerializedBytes);
-
-    const nDatabaseBytesRead = ArtifactFile.reader().readAll(SerializedBytes) catch |Err|
-        return ErrHandler(Err);
-    std.debug.assert(nDatabaseBytesRead == ArtifactHeader.DatabaseSize);
-
-    //var HSAlloc: c.hs_alloc_t = Bannans;
-    //var HSFree: c.hs_free_t = Bannans2;
-    // typedef void *(*hs_alloc_t)(size_t size)
-    // typedef void (*hs_free_t)(void *ptr)
-    // hs_error_t hs_set_allocator(hs_alloc_t alloc_func, hs_free_t free_func)
-
-    // TODO(cjb): hs_set_misc_allocator()
-    var DatabaseBuf = Ally.alloc(u8, ArtifactHeader.DatabaseSize) catch |Err|
-        return ErrHandler(Err);
-    Self.?.*.?.Database = @ptrCast(*c.hs_database_t,
-        @alignCast(@alignOf(c.hs_database_t), DatabaseBuf.ptr));
-
-    HSStatusToErr(c.hs_deserialize_database_at(
-            SerializedBytes.ptr, SerializedBytes.len,
-            Self.?.*.?.Database)) catch |Err|
-        return ErrHandler(Err);
-
-    // TODO(cjb): set allocator used for scratch
-    Self.?.*.?.Scratch = null;
-    HSStatusToErr(c.hs_alloc_scratch(Self.?.*.?.Database, &Self.?.*.?.Scratch)) catch |Err|
-        return ErrHandler(Err);
-
-    // Initialize category ids
-    var CategoryIDs = Ally.alloc(c_uint, ArtifactHeader.nPatterns) catch |Err|
-        return ErrHandler(Err);
-
-    // Read pattern id & category id
-    var PatCatIndex: usize = 0;
-    while (PatCatIndex < ArtifactHeader.nPatterns) : (PatCatIndex += 1)
+    // Read n extractor definitions
+    var ExtractorDefIndex: usize = 0;
+    while (ExtractorDefIndex < ArtiHeader.nExtractorDefs) : (ExtractorDefIndex += 1)
     {
-        var IDBuf = ArtifactFile.reader().readBytesNoEof(4) catch |Err|
-            return ErrHandler(Err);
-        const IDPtr = @ptrCast(*c_uint, @alignCast(@alignOf(c_uint), &IDBuf));
-        var CatBuf = ArtifactFile.reader().readBytesNoEof(4) catch |Err|
-            return ErrHandler(Err);
-        const Cat = @ptrCast(*c_uint, @alignCast(@alignOf(c_uint), &CatBuf));
-        CategoryIDs[IDPtr.*] = Cat.*;
+        // Read definition header
+        const DefHeader = try ArtiF.reader().readStruct(common.gracie_extractor_def_header);
+
+        // TODO(cjb): Store these values somewhere
+        var Country: [2]u8 = undefined;
+        var Language: [2]u8 = undefined;
+        try ArtiF.reader().skipBytes(Language.len + Country.len + DefHeader.nExtractorNameBytes, .{});
+
+        // Read serialized database
+        var SerializedBytes = try Self.Ally.alloc(u8, DefHeader.DatabaseSize);
+        defer Self.Ally.free(SerializedBytes);
+
+        debug.assert(try ArtiF.reader().readAll(SerializedBytes) == DefHeader.DatabaseSize);
+
+        // TODO(cjb): hs_set_misc_allocator():
+            //var HSAlloc: c.hs_alloc_t = Bannans;
+            //var HSFree: c.hs_free_t = Bannans2;
+            // typedef void *(*hs_alloc_t)(size_t size)
+            // typedef void (*hs_free_t)(void *ptr)
+            // hs_error_t hs_set_allocator(hs_alloc_t alloc_func, hs_free_t free_func)
+
+        var DatabaseBuf = try Self.Ally.alloc(u8, DefHeader.DatabaseSize);
+        Self.Database = @ptrCast(*c.hs_database_t, @alignCast(@alignOf(c.hs_database_t),
+                DatabaseBuf.ptr));
+
+        try HSCodeToErr(c.hs_deserialize_database_at(SerializedBytes.ptr, SerializedBytes.len,
+            Self.Database));
+
+        // TODO(cjb): set allocator used for scratch
+        Self.Scratch = null;
+        try HSCodeToErr(c.hs_alloc_scratch(Self.Database, &Self.Scratch));
+
+//
+// Initialize category id's & load py modules
+//
+        Self.CatIDs = array_list(c_uint).init(Self.Ally);
+        var CatIndex: usize = 0;
+        while (CatIndex < DefHeader.nCategories) : (CatIndex += 1)
+        {
+            // Read category header
+            const CatHeader = try ArtiF.reader().readStruct(common.gracie_extractor_cat_header);
+
+            // Record new module
+            var LMod = loaded_py_module{
+                //.ModName= TODO(cjb): Track module name
+                .CatName = try Self.Ally.alloc(u8, CatHeader.nCategoryNameBytes + 1),
+                .CatID = @intCast(c_uint, CatIndex),
+            };
+            debug.assert(try ArtiF.readAll(LMod.CatName[0 .. CatHeader.nCategoryNameBytes]) ==
+                CatHeader.nCategoryNameBytes);
+            LMod.CatName[CatHeader.nCategoryNameBytes] = 0;
+            try Self.LoadedPyModules.append(LMod);
+
+            var PatternIndex: usize = 0;
+            while (PatternIndex < CatHeader.nPatterns) : (PatternIndex += 1)
+            {
+                try Self.CatIDs.append(@intCast(c_uint, CatIndex));
+            }
+
+            // Read module's source code
+            var ModSourceCode = try Self.Ally.alloc(u8, CatHeader.nPyPluginSourceBytes + 1);
+            defer Self.Ally.free(ModSourceCode); // We don't need to keep this around.
+            debug.assert(try ArtiF.readAll(ModSourceCode[0 .. CatHeader.nPyPluginSourceBytes]) ==
+                CatHeader.nPyPluginSourceBytes);
+            ModSourceCode[CatHeader.nPyPluginSourceBytes] = 0;
+
+            // Load sempy module
+            var SMCtx = sempy.module_ctx{
+                .Source=ModSourceCode[0..ModSourceCode.len - 1 :0],
+                .Name=LMod.CatName[0..LMod.CatName.len - 1 :0],
+            };
+            try sempy.LoadModuleFromSource(&SMCtx);
+        }
     }
-    Self.?.*.?.CategoryIDs = @ptrCast(?[*]c_uint, CategoryIDs.ptr);
 
-    // Initialize match array list
-    Self.?.*.?.MatchList = array_list(gracie_match).init(Ally);
+    // Initialize match list
+    Self.MatchList = array_list(gracie_match).init(Self.Ally);
 
-    // Initialize python plugins
-    sempy.Init() catch |Err|
-        return ErrHandler(Err);
-
-    // TODO(cjb): Load plugin code from packager bytes
-    var DEBUGSource =
-    \\def SempyMain(Text: str, CategoryID: int) -> None:
-    \\    Num: int = 0
-    \\    for W in Text.split(' '):
-    \\        if (W[0] == '$'):
-    \\          Num = int(W[1:])
-    \\          break
-    \\    if (CategoryID == 0): # Dealing with hourly salary
-    \\        Num *= 8 * 5 * 4 * 12
-    \\    print(f'Salary: {Num}')
-    ;
-    var SMCtx = sempy.module_ctx{.Source=DEBUGSource, .Name="us_en_salary"};
-    sempy.LoadModuleFromSource(&SMCtx) catch |Err|
-        return ErrHandler(Err);
-
-    return GRACIE_SUCCESS;
+    return Self;
 }
 
 fn EventHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
     Ctx: ?*anyopaque) callconv(.C) c_int
 {
-    const GraciePtr = @ptrCast(?*self, @alignCast(@alignOf(?*self), Ctx));
-    if (GraciePtr.?.MatchList.items.len + 1 > GraciePtr.?.MatchList.capacity)
+    const This = @ptrCast(?*self, @alignCast(@alignOf(?*self), Ctx)) orelse unreachable;
+    if (This.MatchList.items.len + 1 > This.MatchList.capacity)
     {
-        GraciePtr.?.MatchList.append(.{.SO=From, .EO=To,
-            .CategoryID=GraciePtr.?.CategoryIDs.?[ID]}) catch unreachable;
+        // NOTE(cjb): Should an error be thrown here?
+        This.MatchList.append(.{.SO=From, .EO=To, .CatID=This.CatIDs.items[ID]}) catch unreachable;
         return 0;
     }
     return 1;
@@ -220,58 +326,42 @@ fn EventHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
 
 export fn GracieExtract(Ctx: ?*?*anyopaque, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C) c_int
 {
-    return Extract(Ctx, Text, nTextBytes);
+    var Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
+    Extract(Self.?.*.?, Text, nTextBytes) catch |Err|
+        return ErrToCode(Err);
+    return GRACIE_SUCCESS;
 }
 
-pub fn Extract(Ctx: ?*?*anyopaque, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C) c_int
+pub fn Extract(Self: *self, Text: ?[*]u8, nTextBytes: c_uint) !void
 {
-    const Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
-    const GraciePtr = Self.?.*.?;
-
-    //TODO(cjb):
-
     // Reset stuff
-    GraciePtr.MatchList.clearRetainingCapacity();
+    Self.MatchList.clearRetainingCapacity();
 
-    // HYPERSCANNNNN!!
-    HSStatusToErr(c.hs_scan(GraciePtr.Database, Text, nTextBytes, 0,
-            GraciePtr.Scratch, EventHandler, GraciePtr)) catch |Err|
-        return ErrHandler(Err);
-
-    //slab_allocator.DEBUGSlabVisularizer(&GraciePtr.Slaba);
-    for (GraciePtr.MatchList.items) |M|
+    // Hyperscannnnn!!
+    try HSCodeToErr(c.hs_scan(Self.Database, Text, nTextBytes, 0, Self.Scratch,
+            EventHandler, Self));
+    for (Self.MatchList.items) |M|
     {
-        sempy.RunModule(Text.?[M.SO .. M.EO], M.CategoryID) catch |Err|
-            return ErrHandler(Err);
+        try sempy.RunModule(Text.?[M.SO .. M.EO], M.CatID);
     }
-    return GRACIE_SUCCESS;
 }
 
 export fn GracieDeinit(Ctx: ?*?*anyopaque) callconv(.C) c_int
 {
-    return Deinit(Ctx);
+    const Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
+    Deinit(Self.?.*.?) catch |Err|
+        return ErrToCode(Err);
+    Self.?.*.?.Ally.destroy(Self.?.*.?);
+    return GRACIE_SUCCESS;
 }
 
-pub fn Deinit(Ctx: ?*?*anyopaque) callconv(.C) c_int
+pub fn Deinit(Self: *self) !void
 {
-    const Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
-    const SelfPtr = Self.?.*.?;
-
     // Free hs scratch
-    HSStatusToErr(c.hs_free_scratch(SelfPtr.Scratch)) catch |Err|
-        return ErrHandler(Err);
+    try HSCodeToErr(c.hs_free_scratch(Self.Scratch));
 
     // Deinitialize sempy
-    sempy.Deinit() catch |Err|
-        return ErrHandler(Err);
-
-    // Free backing buffer
-    std.heap.page_allocator.free(SelfPtr.BackingBuffer);
-
-    // Invalidate ptr
-    Self.?.* = null;
-
-    return GRACIE_SUCCESS;
+    try sempy.Deinit();
 }
 
 test "Gracie"
