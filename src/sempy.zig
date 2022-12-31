@@ -1,14 +1,9 @@
+const std = @import("std");
 const self = @This();
 const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
     @cInclude("Python.h");
 });
-
-pub const module_ctx = struct
-{
-    Source: [*:0]const u8,
-    Name: [*:0]const u8,
-};
 
 pub fn Init() !void
 {
@@ -30,20 +25,29 @@ pub fn Deinit() !void
     return;
 }
 
-pub fn LoadModuleFromSource(SM: *module_ctx) !void
+pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !void
 {
     //  Is uninitialized?
     if (c.Py_IsInitialized() == 0)
+    {
+        return error.SempyUnknown;
+    }
+
+    // Check params are null terminated
+    if ((NameZ[NameZ.len - 1] != 0) or
+        (SourceZ[SourceZ.len - 1] != 0))
     {
         return error.SempyInvalid;
     }
 
     const Builtins = c.PyEval_GetBuiltins();
     const Compile = c.PyDict_GetItemString(Builtins, "compile");
-    const Code = c.PyObject_CallFunction(Compile, "sss", SM.Source, "", "exec");
+    const Code = c.PyObject_CallFunction(Compile, "sss", @ptrCast([* :0]const u8, SourceZ.ptr),
+        @ptrCast([* :0]const u8, NameZ.ptr), "exec");
     if (Code != null)
     {
-        const Module = c.PyImport_ExecCodeModule(SM.Name, Code);
+        const Module = c.PyImport_ExecCodeModule(
+            @ptrCast([* :0]const u8, NameZ.ptr), Code);
         defer c.Py_XDECREF(Module);
         if (Module == null)
         {
@@ -55,15 +59,14 @@ pub fn LoadModuleFromSource(SM: *module_ctx) !void
     c.Py_DECREF(Builtins);
 }
 
-pub fn RunModule(Text: []const u8, CategoryID: c_uint) !void
+pub fn RunModule(Text: []const u8, NameZ: []const u8) !void
 {
-    _ = CategoryID;
     if (c.Py_IsInitialized() == 0)
     {
-        return error.SempyInvalid;
+        return error.SempyUnknown;
     }
 
-    const pName = c.PyUnicode_DecodeFSDefault("hourly"); //TODO(cjb): Get module name somehow
+    const pName = c.PyUnicode_DecodeFSDefault(@ptrCast([* :0]const u8, NameZ.ptr));
     defer c.Py_XDECREF(pName);
 
     const pModule = c.PyImport_Import(pName);
@@ -94,29 +97,13 @@ pub fn RunModule(Text: []const u8, CategoryID: c_uint) !void
 //            {
 //                return error.SempyConvertArgs;
 //            }
-//            if (c.PyTuple_SetItem(pArgs, 1, pValue) == -1)
-//            {
-//                unreachable;
-//            }
 
             pValue = c.PyObject_CallObject(pFunc, pArgs);
-//            if (pValue != NULL) {
-//                printf("Result of call: %ld\n", PyLong_AsLong(pValue));
-//                Py_DECREF(pValue);
-//            }
-        }
-        else //TODO(cjb): how should this be captured??? -- error str?
-        {
-            if (c.PyErr_Occurred() != 0)
-            {
-                c.PyErr_Print();
-                return error.SempyUnknown;
-            }
         }
     }
-    else //DITTO
+    if (c.PyErr_Occurred() != 0)
     {
-        c.PyErr_Print();
+        c.PyErr_Print(); // TODO(cjb): Don't print this here.
         return error.SempyUnknown;
     }
 }

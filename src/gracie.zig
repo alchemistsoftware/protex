@@ -23,7 +23,7 @@ const gracie_match = struct
 const loaded_py_module = struct
 {
 //    ModName: []u8,
-    CatName: []u8,
+    NameZ: []u8,
     CatID: c_uint,
 };
 
@@ -188,17 +188,16 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
         {
             // Read category header
             const CatHeader = try ArtiF.reader().readStruct(common.gracie_extractor_cat_header);
+            try ArtiF.reader().skipBytes(CatHeader.nCategoryNameBytes, .{});
 
             // Record new module
             var LMod = loaded_py_module{
-                //.ModName= TODO(cjb): Track module name
-                .CatName = try Self.Ally.alloc(u8, CatHeader.nCategoryNameBytes + 1),
+                .NameZ = try Self.Ally.alloc(u8, CatHeader.nPyNameBytes + 1),
                 .CatID = @intCast(c_uint, CatIndex),
             };
-            debug.assert(try ArtiF.readAll(LMod.CatName[0 .. CatHeader.nCategoryNameBytes]) ==
-                CatHeader.nCategoryNameBytes);
-            LMod.CatName[CatHeader.nCategoryNameBytes] = 0;
-            try Self.LoadedPyModules.append(LMod);
+            debug.assert(try ArtiF.readAll(
+                    LMod.NameZ[0 .. CatHeader.nPyNameBytes]) == CatHeader.nPyNameBytes);
+            LMod.NameZ[LMod.NameZ.len - 1] = 0;
 
             var PatternIndex: usize = 0;
             while (PatternIndex < CatHeader.nPatterns) : (PatternIndex += 1)
@@ -207,18 +206,14 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
             }
 
             // Read module's source code
-            var ModSourceCode = try Self.Ally.alloc(u8, CatHeader.nPyPluginSourceBytes + 1);
-            defer Self.Ally.free(ModSourceCode); // We don't need to keep this around.
-            debug.assert(try ArtiF.readAll(ModSourceCode[0 .. CatHeader.nPyPluginSourceBytes]) ==
-                CatHeader.nPyPluginSourceBytes);
-            ModSourceCode[CatHeader.nPyPluginSourceBytes] = 0;
+            var SourceZ = try Self.Ally.alloc(u8, CatHeader.nPySourceBytes + 1);
+            defer Self.Ally.free(SourceZ); // We don't need to keep this around.
+            debug.assert(try ArtiF.readAll(SourceZ[0 .. CatHeader.nPySourceBytes]) ==
+                CatHeader.nPySourceBytes);
+            SourceZ[SourceZ.len - 1] = 0;
 
-            // Load sempy module
-            var SMCtx = sempy.module_ctx{
-                .Source=ModSourceCode[0..ModSourceCode.len - 1 :0],
-                .Name=LMod.CatName[0..LMod.CatName.len - 1 :0],
-            };
-            try sempy.LoadModuleFromSource(&SMCtx);
+            try sempy.LoadModuleFromSource(LMod.NameZ, SourceZ);
+            try Self.LoadedPyModules.append(LMod);
         }
     }
 
@@ -260,7 +255,8 @@ pub fn Extract(Self: *self, Text: []const u8) !void
             EventHandler, Self));
     for (Self.MatchList.items) |M|
     {
-        try sempy.RunModule(Text[M.SO .. M.EO], M.CatID);
+        //FIXME(cjb): LoadedPyModules[0]
+        try sempy.RunModule(Text[M.SO .. M.EO], Self.LoadedPyModules.items[0].NameZ);
     }
 }
 
@@ -281,7 +277,7 @@ pub fn Deinit(Self: *self) !void
 
     for (Self.LoadedPyModules.items) |Mod|
     {
-        Self.Ally.free(Mod.CatName);
+        Self.Ally.free(Mod.NameZ);
     }
     Self.LoadedPyModules.deinit();
     Self.MatchList.deinit();

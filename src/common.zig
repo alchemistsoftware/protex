@@ -6,7 +6,8 @@
 pub const gracie_extractor_cat_header = packed struct
 {
     nCategoryNameBytes: usize,
-    nPyPluginSourceBytes: usize,
+    nPyNameBytes: usize,
+    nPySourceBytes: usize,
     nPatterns: usize,
 };
 

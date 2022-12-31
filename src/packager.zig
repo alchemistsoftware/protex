@@ -32,11 +32,13 @@ const array_list = std.ArrayList;
 //
 //         |--------Category header---------|
 //         | N category name bytes (usize)  |
-//         | N plugin source bytes (usize)  |
+//         | N py name bytes (usize)        |
+//         | N py source bytes (usize)      |
 //         | N patterns (usize)             |
 //         |---------Category data----------|
 //         | Category name (nbytes)         |
-//         | Plugin source (nBytes)         |
+//         | Py name (nBytes)               |
+//         | Py source (nBytes)             |
 //         |--------------------------------|
 //
 //         |--------Category header---------|
@@ -114,11 +116,11 @@ pub fn main() !void
 
         // List of n python source files
         // TODO(cjb): This will need to be hoisted... see common.zig
-        var Plugins = array_list([]u8).init(Ally);
+        var Pys = array_list([]u8).init(Ally);
         defer
         {
-            for (Plugins.items) |Source| Ally.free(Source);
-            Plugins.deinit();
+            for (Pys.items) |Source| Ally.free(Source);
+            Pys.deinit();
         }
 
         // Each category has an associated python plugin file path as well as a few patterns which
@@ -134,10 +136,10 @@ pub fn main() !void
                 ConfRelSourcePath});
 
             // Open source file, read plugin bytes and append to plugin list.
-            const PluginSourceF = try std.fs.cwd().openFile(AbsSourcePath, .{});
-            var PluginSourceBytes = try
-                PluginSourceF.reader().readAllAlloc(Ally, 1024*10); // 10kib source file cap...
-            try Plugins.append(PluginSourceBytes);
+            const PySourceF = try std.fs.cwd().openFile(AbsSourcePath, .{});
+            var PySourceBytes = try
+                PySourceF.reader().readAllAlloc(Ally, 1024*10); // 10kib source file cap...
+            try Pys.append(PySourceBytes);
 
             // Parse json patterns
             const nExistingPatterns = PatternsZ.items.len;
@@ -217,15 +219,20 @@ pub fn main() !void
         {
             const Patterns = Gory.Object.get("patterns") orelse unreachable;
             const GoryName = Gory.Object.get("name") orelse unreachable;
+            const PyPath = Gory.Object.get("py_source_path") orelse unreachable;
+            const PyBaseName = std.fs.path.basename(PyPath.String);
+            const PyModuleName = std.fs.path.stem(PyBaseName);
             const GoryHeader = common.gracie_extractor_cat_header{
                 .nCategoryNameBytes = GoryName.String.len,
-                .nPyPluginSourceBytes = Plugins.items[GoryIndex].len,
+                .nPyNameBytes = PyModuleName.len,
+                .nPySourceBytes = Pys.items[GoryIndex].len,
                 .nPatterns = Patterns.Array.items.len,
             };
 
             try ArtiF.writer().writeStruct(GoryHeader);
             try ArtiF.writeAll(GoryName.String);
-            try ArtiF.writeAll(Plugins.items[GoryIndex]);
+            try ArtiF.writeAll(PyModuleName);
+            try ArtiF.writeAll(Pys.items[GoryIndex]);
         }
     }
 }
