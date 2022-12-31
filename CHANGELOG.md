@@ -2,7 +2,9 @@
 
 This project adheres to [semver](https://semver.org/)
 
-## [unreleased] - 12-30-22
+## [unreleased] - 12-31-22
+
+## [0.0.3-alpha] - 12-31-22
 ### Changed
 - Artifact structure, the packager and deserializer now handle new artifact structure
 - Improved error handling
