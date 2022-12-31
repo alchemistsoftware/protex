@@ -30,6 +30,7 @@ const loaded_py_module = struct
 // TODO(cjb): Loaded extractors buf...
 
 Database: ?*c.hs_database_t,
+nDatabaseBytes: usize,
 Scratch: ?*c.hs_scratch_t,
 Ally: allocator,
 
@@ -170,7 +171,7 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
         var DatabaseBuf = try Self.Ally.alloc(u8, DefHeader.DatabaseSize);
         Self.Database = @ptrCast(*c.hs_database_t, @alignCast(@alignOf(c.hs_database_t),
                 DatabaseBuf.ptr));
-
+        Self.nDatabaseBytes = DefHeader.DatabaseSize;
         try HSCodeToErr(c.hs_deserialize_database_at(SerializedBytes.ptr, SerializedBytes.len,
             Self.Database));
 
@@ -240,25 +241,26 @@ fn EventHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
     return 1;
 }
 
-export fn GracieExtract(Ctx: ?*?*anyopaque, Text: ?[*]u8, nTextBytes: c_uint) callconv(.C) c_int
+export fn GracieExtract(Ctx: ?*?*anyopaque, Text: ?[*]const u8,
+    nTextBytes: c_uint) callconv(.C) c_int
 {
     var Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
-    Extract(Self.?.*.?, Text, nTextBytes) catch |Err|
+    Extract(Self.?.*.?, Text.?[0 .. nTextBytes]) catch |Err|
         return ErrToCode(Err);
     return GRACIE_SUCCESS;
 }
 
-pub fn Extract(Self: *self, Text: ?[*]u8, nTextBytes: c_uint) !void
+pub fn Extract(Self: *self, Text: []const u8) !void
 {
     // Reset stuff
     Self.MatchList.clearRetainingCapacity();
 
     // Hyperscannnnn!!
-    try HSCodeToErr(c.hs_scan(Self.Database, Text, nTextBytes, 0, Self.Scratch,
+    try HSCodeToErr(c.hs_scan(Self.Database, Text.ptr, @intCast(c_uint, Text.len), 0, Self.Scratch,
             EventHandler, Self));
     for (Self.MatchList.items) |M|
     {
-        try sempy.RunModule(Text.?[M.SO .. M.EO], M.CatID);
+        try sempy.RunModule(Text[M.SO .. M.EO], M.CatID);
     }
 }
 
@@ -275,6 +277,15 @@ pub fn Deinit(Self: *self) !void
 {
     // Free hs scratch
     try HSCodeToErr(c.hs_free_scratch(Self.Scratch));
+    Self.Ally.free(@ptrCast([*]u8, Self.Database.?)[0 .. Self.nDatabaseBytes]);
+
+    for (Self.LoadedPyModules.items) |Mod|
+    {
+        Self.Ally.free(Mod.CatName);
+    }
+    Self.LoadedPyModules.deinit();
+    Self.MatchList.deinit();
+    Self.CatIDs.deinit();
 
     // Deinitialize sempy
     try sempy.Deinit();
@@ -282,11 +293,8 @@ pub fn Deinit(Self: *self) !void
 
 test "Gracie"
 {
-    var GracieCtx: ?*anyopaque = null;
-    try std.testing.expect(
-        self.Init(&GracieCtx, "./data/gracie.bin") ==
-        GRACIE_SUCCESS);
-    try std.testing.expect(
-        self.Deinit(&GracieCtx) ==
-        GRACIE_SUCCESS);
+    var Ally = std.testing.allocator;
+    var G = try self.Init(Ally, "./data/gracie.bin");
+    try self.Extract(&G, "Earn $300 an hour"[0 ..]);
+    try self.Deinit(&G);
 }

@@ -55,7 +55,7 @@ pub fn LoadModuleFromSource(SM: *module_ctx) !void
     c.Py_DECREF(Builtins);
 }
 
-pub fn RunModule(Text: []u8, CategoryID: c_uint) !void
+pub fn RunModule(Text: []const u8, CategoryID: c_uint) !void
 {
     _ = CategoryID;
     if (c.Py_IsInitialized() == 0)

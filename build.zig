@@ -8,7 +8,6 @@ pub fn build(B: *std.build.Builder) void {
     const Gracie = B.addSharedLibrary("gracie", "src/gracie.zig", B.version(0, 0, 1));
     Gracie.setBuildMode(Mode);
     Gracie.setOutputDir("./lib");
-    Gracie.addIncludePath("/usr/include/python3.11");
     Gracie.addIncludePath("/usr/include/hs/");
     Gracie.addIncludePath("./src");
     Gracie.addIncludePath("/usr/include/python3.11");
@@ -23,7 +22,14 @@ pub fn build(B: *std.build.Builder) void {
 
     const GracieTests = B.addTest("src/gracie.zig");
     GracieTests.setBuildMode(Mode);
+    GracieTests.addIncludePath("/usr/include/python3.11");
     GracieTests.addIncludePath("/usr/include/hs/");
+    GracieTests.addIncludePath("./src");
+    GracieTests.linkSystemLibrary("python3.11");
+    GracieTests.linkSystemLibrary("pthread");
+    GracieTests.linkSystemLibrary("dl");
+    GracieTests.linkSystemLibrary("util");
+    GracieTests.linkSystemLibrary("m");
     GracieTests.linkSystemLibrary("hs_runtime");
     GracieTests.linkLibC();
 
