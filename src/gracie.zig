@@ -33,8 +33,6 @@ Database: ?*c.hs_database_t,
 Scratch: ?*c.hs_scratch_t,
 Ally: allocator,
 
-//ManagedVT: gracie_managed_vtable,
-
 /// List of category ids, where pattern id is the index of the associated category id.
 CatIDs: array_list(c_uint),
 MatchList: array_list(gracie_match), // TODO(cjb): Benchmark init. of this data strcuture within
@@ -108,88 +106,6 @@ fn ErrToCode(Err: anyerror) c_int
         else => unreachable,
     }
 }
-
-//const gracie_free_fn = *const fn(Ptr: ?*anyopaque) callconv(.C) void;
-//const gracie_resize_fn = *const fn(Ptr: ?*anyopaque, Size: usize) callconv(.C) ?*anyopaque;
-//
-//const gracie_managed_vtable = extern struct
-//{
-//    Alloc: gracie_alloc_fn,
-//    Free: gracie_free_fn,
-//    Resize: gracie_resize_fn,
-//};
-
-//
-// Allocator compatable vtable functions for calling c memory procedures *mostly* ripped straight
-// from the zig std library.
-//
-
-//fn ManagedAlloc(Ctx: *anyopaque, Len: usize, Log2PtrAlign: u8, RetAddr: usize) ?[*]u8
-//{
-//    _ = RetAddr;
-//    debug.assert(Log2PtrAlign <= comptime std.math.log2_int(usize, @alignOf(std.c.max_align_t)));
-//    const VT = @ptrCast(*gracie_managed_vtable, @alignCast(@alignOf(gracie_managed_vtable), Ctx));
-//    return @ptrCast(?[*]u8, VT.Alloc(Len));
-//}
-//
-//fn GetRecordPtr(Buf: []u8) *align(1) usize
-//{
-//    return @intToPtr(*align(1) usize, @ptrToInt(Buf.ptr) + Buf.len);
-//}
-//
-//fn ManagedResize(Ctx: *anyopaque, Buf: []u8, Log2OldAlign: u8, NewLen: usize, RetAddr: usize) ?[*]u8
-//{
-//    _ = Log2OldAlign;
-//    _ = RetAddr;
-//    const VT = @ptrCast(*gracie_managed_vtable, @alignCast(@alignOf(gracie_managed_vtable), Ctx));
-//
-//    return @ptrCast(?[*]u8, VT.Resize(Buf.ptr, NewLen));
-//    assert(new_ptr == @intToPtr(*anyopaque, root_addr));
-//    getRecordPtr(buf.ptr[0..new_size]).* = root_addr;
-//}
-//
-//fn ManagedFree(Ctx: *anyopaque, Buf: []u8, Log2OldAlign: u8, NewLen: usize, RetAddr: usize) void
-//{
-//    _ = Log2OldAlign;
-//    _ = RetAddr;
-//    _ = NewLen;
-//    const VT = @ptrCast(*gracie_managed_vtable, @alignCast(@alignOf(gracie_managed_vtable), Ctx));
-//    VT.Free(Buf.ptr);
-//}
-//export fn GracieManagedInit(Ctx: ?*?*anyopaque, Alloc: gracie_alloc_fn, Free: gracie_free_fn,
-//    Resize: gracie_resize_fn, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
-//{
-//    var Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
-//
-//    // Stack allocator from stack vtable
-//    var SVT = gracie_managed_vtable{
-//        .Alloc = Alloc,
-//        .Resize= Resize,
-//        .Free = Free,
-//    };
-//    var SAlly = allocator{
-//        .ptr = @ptrCast(*anyopaque, &SVT),
-//        .vtable = &.{
-//            .alloc = ManagedAlloc,
-//            .resize = ManagedResize,
-//            .free = ManagedFree,
-//        },
-//    };
-//
-//    // Perform managed alloc storing result of self.Init in allocated slot.
-//    var SelfBytes = ManagedAlloc(&SVT, @sizeOf(self), @sizeOf(*void * 2), 0);
-//    Self.?.* = @ptrCast(?*self, @alignCast(@alignOf(self), SelfBytes));
-//    Self.?.* orelse return GRACIE_NOMEM; // Check to see if actually alloc'd.
-//    Self.?.*.?.* = Init(Ctx, SAlly, ArtifactPathZ) catch |Err|
-//        return ErrToCode(Err);
-//
-//    // Copy stack allocated vtable to new Self's vtable then update stack allocated allocator's
-//    //  pointer to point to Self's vtable (just copied) instead of the original.
-//    Self.ManagedVT = SVT;
-//    Self.Ally.ptr = &Self.ManagedVT;
-//
-//    return GRACIE_SUCCESS;
-//}
 
 export fn GracieInit(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
 {
