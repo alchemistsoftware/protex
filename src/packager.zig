@@ -184,7 +184,7 @@ pub fn main() !void
         {
             unreachable;
         }
-        defer std.heap.raw_c_allocator.free(SerializedDBBytes.?[0 .. nSerializedDBBytes]);  //TODO(cjb): hs free???
+        defer std.heap.raw_c_allocator.free(SerializedDBBytes.?[0 .. nSerializedDBBytes]);
 
 //
 // Write extractor definition header and it's data. Then proceed to write the category

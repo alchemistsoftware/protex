@@ -57,46 +57,47 @@ pub fn LoadModuleFromSource(SM: *module_ctx) !void
 
 pub fn RunModule(Text: []u8, CategoryID: c_uint) !void
 {
+    _ = CategoryID;
     if (c.Py_IsInitialized() == 0)
     {
         return error.SempyInvalid;
     }
 
-    const pName = c.PyUnicode_DecodeFSDefault("us_en_salary"); //TODO(cjb): Get module name somehow
+    const pName = c.PyUnicode_DecodeFSDefault("hourly"); //TODO(cjb): Get module name somehow
     defer c.Py_XDECREF(pName);
 
     const pModule = c.PyImport_Import(pName);
     defer c.Py_XDECREF(pModule);
     if (pModule != null)
     {
-        const pFunc = c.PyObject_GetAttrString(pModule, "SempyMain");
+        const pFunc = c.PyObject_GetAttrString(pModule, "main");
         defer c.Py_DECREF(pFunc);
         if (pFunc != null)
         {
-            const pArgs = c.PyTuple_New(2);
+            const pArgs = c.PyTuple_New(1);
             defer c.Py_DECREF(pArgs);
 
             var pValue = c.PyUnicode_FromStringAndSize(Text.ptr, @intCast(isize, Text.len));
-            defer c.Py_DECREF(pValue);
+            defer c.Py_XDECREF(pValue);
 
             if (pValue == null)
             {
-                return error.SempyConvertArgs;
+                return error.SempyConvertArgsSempyMain;
             }
             if (c.PyTuple_SetItem(pArgs, 0, pValue) == -1)
             {
                 unreachable;
             }
 
-            pValue = c.PyLong_FromUnsignedLong(@intCast(c_ulong, CategoryID));
-            if (pValue == null)
-            {
-                return error.SempyConvertArgs;
-            }
-            if (c.PyTuple_SetItem(pArgs, 1, pValue) == -1)
-            {
-                unreachable;
-            }
+//            pValue = c.PyLong_FromUnsignedLong(@intCast(c_ulong, CategoryID));
+//            if (pValue == null)
+//            {
+//                return error.SempyConvertArgs;
+//            }
+//            if (c.PyTuple_SetItem(pArgs, 1, pValue) == -1)
+//            {
+//                unreachable;
+//            }
 
             pValue = c.PyObject_CallObject(pFunc, pArgs);
 //            if (pValue != NULL) {

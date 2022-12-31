@@ -211,10 +211,9 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
 
     // Initialize sempy ( this must be initialized before any sempy fns are called. )
     try sempy.Init();
-    Self.LoadedPyModules = array_list(loaded_py_module).init(Self.Ally);
 
-    // Initialize match array list
-    Self.MatchList = array_list(gracie_match).init(Self.Ally);
+    // Initialize list to keep track of loaded sempy modules.
+    Self.LoadedPyModules = array_list(loaded_py_module).init(Self.Ally);
 
 //
 // Deserialize artifact
@@ -237,7 +236,7 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
         // TODO(cjb): Store these values somewhere
         var Country: [2]u8 = undefined;
         var Language: [2]u8 = undefined;
-        try ArtiF.reader().skipBytes(Country.len + Language.len + DefHeader.nExtractorNameBytes, .{});
+        try ArtiF.reader().skipBytes(Language.len + Country.len + DefHeader.nExtractorNameBytes, .{});
 
         // Read serialized database
         var SerializedBytes = try Self.Ally.alloc(u8, DefHeader.DatabaseSize);
@@ -279,15 +278,13 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
                 .CatName = try Self.Ally.alloc(u8, CatHeader.nCategoryNameBytes + 1),
                 .CatID = @intCast(c_uint, CatIndex),
             };
-            debug.assert(try ArtiF.readAll(LMod.CatName) == CatHeader.nCategoryNameBytes - 1);
-            LMod.CatName[LMod.CatName.len - 1] = 0;
+            debug.assert(try ArtiF.readAll(LMod.CatName[0 .. CatHeader.nCategoryNameBytes]) ==
+                CatHeader.nCategoryNameBytes);
+            LMod.CatName[CatHeader.nCategoryNameBytes] = 0;
             try Self.LoadedPyModules.append(LMod);
 
-            var nPatternsForCategory: usize = undefined;
-            debug.assert(try ArtiF.reader().readAll(
-                @ptrCast([*]u8, &nPatternsForCategory)[0 .. @sizeOf(usize)]) == @sizeOf(usize));
             var PatternIndex: usize = 0;
-            while (PatternIndex < nPatternsForCategory) : (PatternIndex += 1)
+            while (PatternIndex < CatHeader.nPatterns) : (PatternIndex += 1)
             {
                 try Self.CatIDs.append(@intCast(c_uint, CatIndex));
             }
@@ -295,8 +292,9 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
             // Read module's source code
             var ModSourceCode = try Self.Ally.alloc(u8, CatHeader.nPyPluginSourceBytes + 1);
             defer Self.Ally.free(ModSourceCode); // We don't need to keep this around.
-            debug.assert(try ArtiF.readAll(ModSourceCode) == CatHeader.nPyPluginSourceBytes - 1);
-            ModSourceCode[ModSourceCode.len - 1] = 0;
+            debug.assert(try ArtiF.readAll(ModSourceCode[0 .. CatHeader.nPyPluginSourceBytes]) ==
+                CatHeader.nPyPluginSourceBytes);
+            ModSourceCode[CatHeader.nPyPluginSourceBytes] = 0;
 
             // Load sempy module
             var SMCtx = sempy.module_ctx{
@@ -306,6 +304,9 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
             try sempy.LoadModuleFromSource(&SMCtx);
         }
     }
+
+    // Initialize match list
+    Self.MatchList = array_list(gracie_match).init(Self.Ally);
 
     return Self;
 }
