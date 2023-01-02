@@ -13,30 +13,34 @@ const array_list = std.ArrayList;
 const self = @This();
 
 // NOTE(cjb): Keep in mind this will need to be exposed at some point or another.
-const gracie_match = struct
+const match = struct
 {
     SO: c_ulonglong,
     EO: c_ulonglong,
-    CatID: c_uint,
+    ID: c_uint,
 };
 
 const loaded_py_module = struct
 {
-//    ModName: []u8,
     NameZ: []u8,
-    CatID: c_uint,
 };
 
 // TODO(cjb): Loaded extractors buf...
+const cat_box = struct
+{
+    CategoryName: []u8,
+    MainPyModuleIndex: usize,
+    StartPatternID: c_uint,
+    EndPatternID: c_uint, // Exclusive
+};
 
 Database: ?*c.hs_database_t,
 nDatabaseBytes: usize,
 Scratch: ?*c.hs_scratch_t,
 Ally: allocator,
 
-/// List of category ids, where pattern id is the index of the associated category id.
-CatIDs: array_list(c_uint),
-MatchList: array_list(gracie_match), // TODO(cjb): Benchmark init. of this data strcuture within
+CatBoxes: array_list(cat_box),
+MatchList: array_list(match), // TODO(cjb): Benchmark init. of this data strcuture within
                                      // extract call instead of GracieInit
 LoadedPyModules: array_list(loaded_py_module),
 //
@@ -122,15 +126,7 @@ export fn GracieInit(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv
 pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
 {
     var Self: self = undefined;
-
-    // Copy alloactor
     Self.Ally = Ally;
-
-    // Initialize sempy ( this must be initialized before any sempy fns are called. )
-    try sempy.Init();
-
-    // Initialize list to keep track of loaded sempy modules.
-    Self.LoadedPyModules = array_list(loaded_py_module).init(Self.Ally);
 
 //
 // Deserialize artifact
@@ -141,14 +137,52 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
     const ArtiF = try std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{});
 
     // Read artifact header
-    const ArtiHeader = try ArtiF.reader().readStruct(common.gracie_arti_header);
+    const ArtiHeader = try ArtiF.reader().readStruct(common.arti_header);
+
+//
+// Read python module data and pass it to sempy for loading.
+//
+    // Sempy must be initialized before any sempy fns are called.
+    try sempy.Init();
+
+    // Future sempy run calls will require module name so we will store them here.
+    Self.LoadedPyModules = array_list(loaded_py_module).init(Self.Ally);
+
+    var PyModIndex: usize = 0;
+    while (PyModIndex < ArtiHeader.nPyModules) : (PyModIndex += 1)
+    {
+        const PyModHeader = try ArtiF.reader().readStruct(common.arti_py_module_header);
+
+        // Make loaded module & new NameZ buf.
+        var LoadedMod = loaded_py_module{
+            .NameZ = try Self.Ally.alloc(u8, PyModHeader.nPyNameBytes + 1),
+        };
+
+        // Code buf
+        var SourceZ = try Self.Ally.alloc(u8, PyModHeader.nPySourceBytes + 1);
+        defer Self.Ally.free(SourceZ); // Uneeded after sempy load call.
+
+        // Read name & code
+        debug.assert(try ArtiF.readAll(LoadedMod.NameZ[0 .. PyModHeader.nPyNameBytes]) ==
+            PyModHeader.nPyNameBytes);
+        debug.assert(try ArtiF.readAll(SourceZ[0 .. PyModHeader.nPySourceBytes]) ==
+            PyModHeader.nPySourceBytes);
+
+        // Null terminate both name & code buffers.
+        LoadedMod.NameZ[LoadedMod.NameZ.len - 1] = 0;
+        SourceZ[SourceZ.len - 1] = 0;
+
+        // Attempt to load module & append to module list.
+        try sempy.LoadModuleFromSource(LoadedMod.NameZ, SourceZ);
+        try Self.LoadedPyModules.append(LoadedMod);
+    }
 
     // Read n extractor definitions
     var ExtractorDefIndex: usize = 0;
     while (ExtractorDefIndex < ArtiHeader.nExtractorDefs) : (ExtractorDefIndex += 1)
     {
         // Read definition header
-        const DefHeader = try ArtiF.reader().readStruct(common.gracie_extractor_def_header);
+        const DefHeader = try ArtiF.reader().readStruct(common.arti_def_header);
 
         // TODO(cjb): Store these values somewhere
         var Country: [2]u8 = undefined;
@@ -158,7 +192,6 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
         // Read serialized database
         var SerializedBytes = try Self.Ally.alloc(u8, DefHeader.DatabaseSize);
         defer Self.Ally.free(SerializedBytes);
-
         debug.assert(try ArtiF.reader().readAll(SerializedBytes) == DefHeader.DatabaseSize);
 
         // TODO(cjb): hs_set_misc_allocator():
@@ -180,45 +213,42 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
         try HSCodeToErr(c.hs_alloc_scratch(Self.Database, &Self.Scratch));
 
 //
-// Initialize category id's & load py modules
+// Read category data
 //
-        Self.CatIDs = array_list(c_uint).init(Self.Ally);
+        Self.CatBoxes = array_list(cat_box).init(Ally);
+
+        var PatternSum: usize = 0;
         var CatIndex: usize = 0;
         while (CatIndex < DefHeader.nCategories) : (CatIndex += 1)
         {
-            // Read category header
-            const CatHeader = try ArtiF.reader().readStruct(common.gracie_extractor_cat_header);
-            try ArtiF.reader().skipBytes(CatHeader.nCategoryNameBytes, .{});
+            const CatHeader = try ArtiF.reader().readStruct(common.arti_cat_header);
 
-            // Record new module
-            var LMod = loaded_py_module{
-                .NameZ = try Self.Ally.alloc(u8, CatHeader.nPyNameBytes + 1),
-                .CatID = @intCast(c_uint, CatIndex),
-            };
-            debug.assert(try ArtiF.readAll(
-                    LMod.NameZ[0 .. CatHeader.nPyNameBytes]) == CatHeader.nPyNameBytes);
-            LMod.NameZ[LMod.NameZ.len - 1] = 0;
+            // Category name
+            var CategoryName = try Ally.alloc(u8, CatHeader.nCategoryNameBytes);
+            debug.assert(try ArtiF.readAll(CategoryName) == CatHeader.nCategoryNameBytes);
 
-            var PatternIndex: usize = 0;
-            while (PatternIndex < CatHeader.nPatterns) : (PatternIndex += 1)
-            {
-                try Self.CatIDs.append(@intCast(c_uint, CatIndex));
-            }
+            // Pattern count
+            var nPatternsForCategory: usize = undefined;
+            debug.assert(try ArtiF.readAll(@ptrCast([*]u8, &nPatternsForCategory)
+                    [0 .. @sizeOf(usize)]) == @sizeOf(usize));
+            PatternSum += nPatternsForCategory;
 
-            // Read module's source code
-            var SourceZ = try Self.Ally.alloc(u8, CatHeader.nPySourceBytes + 1);
-            defer Self.Ally.free(SourceZ); // We don't need to keep this around.
-            debug.assert(try ArtiF.readAll(SourceZ[0 .. CatHeader.nPySourceBytes]) ==
-                CatHeader.nPySourceBytes);
-            SourceZ[SourceZ.len - 1] = 0;
+            // Mainpy module index
+            var MainPyModuleIndex: usize = undefined;
+            debug.assert(try ArtiF.readAll(@ptrCast([*]u8, &MainPyModuleIndex)
+                    [0 .. @sizeOf(usize)]) == @sizeOf(usize));
 
-            try sempy.LoadModuleFromSource(LMod.NameZ, SourceZ);
-            try Self.LoadedPyModules.append(LMod);
+           try Self.CatBoxes.append(cat_box{
+               .CategoryName = CategoryName,
+               .MainPyModuleIndex = MainPyModuleIndex,
+               .StartPatternID = @intCast(c_uint, PatternSum - nPatternsForCategory),
+               .EndPatternID = @intCast(c_uint, PatternSum),
+           });
         }
     }
 
     // Initialize match list
-    Self.MatchList = array_list(gracie_match).init(Self.Ally);
+    Self.MatchList = array_list(match).init(Self.Ally);
 
     return Self;
 }
@@ -226,12 +256,17 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
 fn EventHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
     Ctx: ?*anyopaque) callconv(.C) c_int
 {
-    const This = @ptrCast(?*self, @alignCast(@alignOf(?*self), Ctx)) orelse unreachable;
-    if (This.MatchList.items.len + 1 > This.MatchList.capacity)
+    const MatchList = @ptrCast(?*array_list(match),
+        @alignCast(@alignOf(?*array_list(match)), Ctx)) orelse unreachable;
+    if (MatchList.items.len + 1 > MatchList.capacity)
     {
-        // NOTE(cjb): Should an error be thrown here?
-        This.MatchList.append(.{.SO=From, .EO=To, .CatID=This.CatIDs.items[ID]}) catch unreachable;
+        // TODO(cjb): Decide if this should be handled or not.
+        MatchList.append(.{.SO=From, .EO=To, .ID=ID}) catch unreachable;
         return 0;
+    }
+    else
+    {
+        unreachable; //TODO(cjb): Grow matchlist...
     }
     return 1;
 }
@@ -247,16 +282,25 @@ export fn GracieExtract(Ctx: ?*?*anyopaque, Text: ?[*]const u8,
 
 pub fn Extract(Self: *self, Text: []const u8) !void
 {
-    // Reset stuff
+    // Reset MatchList)
     Self.MatchList.clearRetainingCapacity();
 
     // Hyperscannnnn!!
     try HSCodeToErr(c.hs_scan(Self.Database, Text.ptr, @intCast(c_uint, Text.len), 0, Self.Scratch,
-            EventHandler, Self));
+            EventHandler, &Self.MatchList));
     for (Self.MatchList.items) |M|
     {
-        //FIXME(cjb): LoadedPyModules[0]
-        try sempy.RunModule(Text[M.SO .. M.EO], Self.LoadedPyModules.items[0].NameZ);
+        var MainModuleIndex: usize = undefined;
+        for (Self.CatBoxes.items) |Cat|
+        {
+            if ((M.ID >= Cat.StartPatternID) and
+                (M.ID < Cat.EndPatternID))
+            {
+                MainModuleIndex = Cat.MainPyModuleIndex;
+            }
+        }
+        try sempy.RunModule(Text[M.SO .. M.EO], Self.LoadedPyModules.items[MainModuleIndex].NameZ);
+        break;
     }
 }
 
@@ -275,13 +319,13 @@ pub fn Deinit(Self: *self) !void
     try HSCodeToErr(c.hs_free_scratch(Self.Scratch));
     Self.Ally.free(@ptrCast([*]u8, Self.Database.?)[0 .. Self.nDatabaseBytes]);
 
-    for (Self.LoadedPyModules.items) |Mod|
-    {
-        Self.Ally.free(Mod.NameZ);
-    }
+    for (Self.LoadedPyModules.items) |Mod| Self.Ally.free(Mod.NameZ);
     Self.LoadedPyModules.deinit();
+
     Self.MatchList.deinit();
-    Self.CatIDs.deinit();
+
+    for (Self.CatBoxes.items) |Cat| Self.Ally.free(Cat.CategoryName);
+    Self.CatBoxes.deinit();
 
     // Deinitialize sempy
     try sempy.Deinit();
@@ -291,6 +335,6 @@ test "Gracie"
 {
     var Ally = std.testing.allocator;
     var G = try self.Init(Ally, "./data/gracie.bin");
-    try self.Extract(&G, "Earn $300 an hour"[0 ..]);
+    try self.Extract(&G, "Earn $300 an hour");
     try self.Deinit(&G);
 }

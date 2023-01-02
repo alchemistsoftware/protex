@@ -6,49 +6,20 @@ const c = @cImport({
 
 const array_list = std.ArrayList;
 
-//
-// Visual layout of a gracie artifact
-//
-
-//TODO(cjb): Currently python source code is serialized per category, however there may be an
-//  instance where it is desired to have a single plugin shared across multiple categories or even
-//  extractors. Don't replicate source bytes.
-// TODO(cjb): Support multipule plugins per category.
-
-// |--------Artifact header---------|
-// |Extraction ctx count (usize)    |
-// |--------------------------------|
-//
-//     |---Extraction context header----|
-//     | N extractor name bytes (usize) |
-//     | N database bytes (usize)       |
-//     | N categories (usize)           |
-//     |----Extraction context data-----|
-//     | Country (2 bytes)              |
-//     | Language (2 bytes)             |
-//     | Extractor name (nBytes)        |
-//     | HS database (nbytes)           |
-//     |--------------------------------|
-//
-//         |--------Category header---------|
-//         | N category name bytes (usize)  |
-//         | N py name bytes (usize)        |
-//         | N py source bytes (usize)      |
-//         | N patterns (usize)             |
-//         |---------Category data----------|
-//         | Category name (nbytes)         |
-//         | Py name (nBytes)               |
-//         | Py source (nBytes)             |
-//         |--------------------------------|
-//
-//         |--------Category header---------|
-//         |              ...               |
-//         |--------------------------------|
-//
-//     |---Extraction context header----|
-//     |             ...                |
-//     |--------------------------------|
-//
+fn CountFilesInDirWithExtension(IDir: std.fs.IterableDir, Extension: []const u8) !usize
+{
+    var Result: usize = 0;
+    var Iterator = IDir.iterate();
+    var Entry = try Iterator.next();
+    while (Entry != null) : (Entry = try Iterator.next())
+    {
+        if (std.mem.eql(u8, std.fs.path.extension(Entry.?.name), Extension))
+        {
+            Result += 1;
+        }
+    }
+    return Result;
+}
 
 pub fn main() !void
 {
@@ -77,27 +48,86 @@ pub fn main() !void
     _ = SplitAbsConfigPath.next();
     const AbsConfigDir = SplitAbsConfigPath.rest();
 
-//
-// Parse the config file.
-//
+    // Read conf file in it's entirety then parse
     const FigF = try std.fs.cwd().openFile(ConfPathZ, .{});
-
-    // Obtain parser and read conf file in it's entirety.
-    var Parser = std.json.Parser.init(Ally, false);
-    var ConfBytes = try FigF.reader().readAllAlloc(Ally, 1024*5); // 5kib should be enough
+    var ConfBytes = try FigF.reader().readAllAlloc(Ally, 1024*10); // 10kib should be enough
     defer Ally.free(ConfBytes);
-
-    // Parse bytes
+    var Parser = std.json.Parser.init(Ally, false);
     const ParseTree = try Parser.parse(ConfBytes);
+    const PyIncludePath = ParseTree.root.Object.get("py_include_path") orelse unreachable;
     const Extractors = ParseTree.root.Object.get("extractors") orelse unreachable;
 
 //
-// Create an artifact and write header before moving on.
+// Create artifact file and write initial header.
 //
+    // Create artifact file at path provided as second command line arg
     const ArtiPathZ = ArgIter.next() orelse unreachable;
     const ArtiF = try std.fs.cwd().createFile(ArtiPathZ, .{});
-    var ArtiHeader = common.gracie_arti_header{.nExtractorDefs = Extractors.Array.items.len};
+
+    //TODO(cjb): Be path agnostic here i.e. normalize to abs path but ignore if absoulute
+    const AbsIncludePath = try std.fs.path.join(Ally, &[_][]const u8{AbsConfigDir,
+        PyIncludePath.String});
+
+    // Temp. open include dir so we can get count of TOP LEVEL '.py' files NOTE(cjb): recursive?
+    var PyIncludeDir = try std.fs.openIterableDirAbsolute(AbsIncludePath,
+        .{.access_sub_paths=true, .no_follow=true});
+    const nPyModules = try CountFilesInDirWithExtension(PyIncludeDir, ".py");
+    defer PyIncludeDir.close();
+
+    // Write header
+    var ArtiHeader = common.arti_header{
+        .nPyModules = nPyModules,
+        .nExtractorDefs = Extractors.Array.items.len,
+    };
     try ArtiF.writer().writeStruct(ArtiHeader);
+
+//
+// Read python module data
+//
+    // Initialize module names list
+    var PyModuleNames = array_list([]const u8).init(Ally);
+    defer
+    {
+        for (PyModuleNames.items) |NameBuf| Ally.free(NameBuf);
+        PyModuleNames.deinit();
+    }
+
+    var PyIncludeDirIter = PyIncludeDir.iterate();
+    var PyIncludeDirEntry = try PyIncludeDirIter.next();
+    while (PyIncludeDirEntry != null) : (PyIncludeDirEntry = try PyIncludeDirIter.next())
+    {
+        // Check for .py extension
+        if (!std.mem.eql(u8, std.fs.path.extension(PyIncludeDirEntry.?.name), ".py"))
+        {
+            continue;
+        }
+
+        // Open source file, read plugin bytes and compute stripped basename.
+        const AbsPyModulePath = try std.fs.path.join(Ally, &[_][]const u8{AbsIncludePath,
+            PyIncludeDirEntry.?.name});
+        const PySourceF = try std.fs.openFileAbsolute(AbsPyModulePath, .{});
+        var PySourceBytes = try PySourceF.reader().readAllAlloc(Ally, 1024*10);
+        defer Ally.free(PySourceBytes); // Don't need to hold onto these after serialization.
+
+        // Write header, module name, and source bytes
+        const BaseName = std.fs.path.basename(PyIncludeDirEntry.?.name);
+        const ModuleName = std.fs.path.stem(BaseName);
+        const PyModuleHeader = common.arti_py_module_header{
+            .nPyNameBytes = ModuleName.len,
+            .nPySourceBytes = PySourceBytes.len,
+        };
+        try ArtiF.writer().writeStruct(PyModuleHeader);
+        try ArtiF.writer().writeAll(ModuleName);
+        try ArtiF.writer().writeAll(PySourceBytes);
+
+        // Lastly, commit module name to list as it will be required later to map the module which a
+        // category specifies to an index within this list.
+        var ModuleNameBuf = try Ally.alloc(u8, ModuleName.len);
+        for (ModuleName) |Byte, Index| ModuleNameBuf[Index] = Byte;
+        try PyModuleNames.append(ModuleNameBuf);
+    }
+
+
     // TODO(cjb): Breif desc about what is going on here...
     for (Extractors.Array.items) |Extractor|
     {
@@ -114,32 +144,13 @@ pub fn main() !void
             IDs.deinit();
         }
 
-        // List of n python source files
-        // TODO(cjb): This will need to be hoisted... see common.zig
-        var Pys = array_list([]u8).init(Ally);
-        defer
-        {
-            for (Pys.items) |Source| Ally.free(Source);
-            Pys.deinit();
-        }
 
         // Each category has an associated python plugin file path as well as a few patterns which
         // are specific to a given category. For patterns this logic simply writes to the realavent
-        // list used during the hs_compile_multi call. Python source bytes are written to a seperate
-        // list.
+        // list used during the hs_compile_multi call.
         var Categories = Extractor.Object.get("categories") orelse unreachable;
         for (Categories.Array.items) |Category|
         {
-            // Build path to plugin file
-            const ConfRelSourcePath = Category.Object.get("py_source_path").?.String;
-            const AbsSourcePath = try std.fs.path.join(Ally, &[_][]const u8{AbsConfigDir,
-                ConfRelSourcePath});
-
-            // Open source file, read plugin bytes and append to plugin list.
-            const PySourceF = try std.fs.cwd().openFile(AbsSourcePath, .{});
-            var PySourceBytes = try
-                PySourceF.reader().readAllAlloc(Ally, 1024*10); // 10kib source file cap...
-            try Pys.append(PySourceBytes);
 
             // Parse json patterns
             const nExistingPatterns = PatternsZ.items.len;
@@ -197,14 +208,14 @@ pub fn main() !void
         const Language = Extractor.Object.get("language") orelse unreachable;
         const ExtractorName = Extractor.Object.get("name") orelse unreachable;
 
-        // Verify country and langauge lengths
+        // Verify country and langauge are digraphs
         if ((Country.String.len != 2) or
             (Language.String.len != 2))
         {
             unreachable;
         }
 
-        const DefHeader = common.gracie_extractor_def_header{
+        const DefHeader = common.arti_def_header{
             .nExtractorNameBytes = ExtractorName.String.len,
             .DatabaseSize = nSerializedDBBytes,
             .nCategories = Categories.Array.items.len,
@@ -215,24 +226,33 @@ pub fn main() !void
         try ArtiF.writeAll(ExtractorName.String);
         try ArtiF.writeAll(SerializedDBBytes.?[0 .. nSerializedDBBytes]);
 
-        for (Categories.Array.items) |Gory, GoryIndex|
+        for (Categories.Array.items) |Cat|
         {
-            const Patterns = Gory.Object.get("patterns") orelse unreachable;
-            const GoryName = Gory.Object.get("name") orelse unreachable;
-            const PyPath = Gory.Object.get("py_source_path") orelse unreachable;
-            const PyBaseName = std.fs.path.basename(PyPath.String);
-            const PyModuleName = std.fs.path.stem(PyBaseName);
-            const GoryHeader = common.gracie_extractor_cat_header{
-                .nCategoryNameBytes = GoryName.String.len,
-                .nPyNameBytes = PyModuleName.len,
-                .nPySourceBytes = Pys.items[GoryIndex].len,
-                .nPatterns = Patterns.Array.items.len,
+            const Patterns = Cat.Object.get("patterns") orelse unreachable;
+            const CatName = Cat.Object.get("name") orelse unreachable;
+
+            // Read module name and compute index of MainPyModule within PyModuleNames.
+            const MainPyModule = Cat.Object.get("main_py_module") orelse unreachable;
+            const MainPyModuleNoExt = std.fs.path.stem(MainPyModule.String);
+            var MainModuleIndex: isize = -1;
+            for (PyModuleNames.items) |ModuleName, ModuleIndex|
+            {
+                if (std.mem.eql(u8, MainPyModuleNoExt, ModuleName))
+                {
+                    MainModuleIndex = @intCast(isize, ModuleIndex);
+                }
+            }
+            std.debug.assert(MainModuleIndex != -1);
+
+            const CatHeader = common.arti_cat_header{
+                .nCategoryNameBytes = CatName.String.len,
             };
 
-            try ArtiF.writer().writeStruct(GoryHeader);
-            try ArtiF.writeAll(GoryName.String);
-            try ArtiF.writeAll(PyModuleName);
-            try ArtiF.writeAll(Pys.items[GoryIndex]);
+            try ArtiF.writer().writeStruct(CatHeader);
+            try ArtiF.writeAll(CatName.String);
+            try ArtiF.writeAll(@ptrCast([*]const u8, &Patterns.Array.items.len)[0 .. @sizeOf(usize)]);
+            try ArtiF.writeAll(@ptrCast([*]const u8,
+                    &@intCast(usize, MainModuleIndex))[0 .. @sizeOf(usize)]);
         }
     }
 }

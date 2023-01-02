@@ -6,4 +6,4 @@ def main(Text: str) -> None:
           Num = int(W[1:])
           break
     Num *= 8 * 5 * 4 * 12
-    print("Salary: " + str(Num))
+    print("Salaryeee: " + str(Num))
