@@ -8,6 +8,7 @@ const c = @cImport({
 
 const debug = std.debug;
 const allocator = std.mem.Allocator;
+const fixed_buffer_allocator = std.heap.FixedBufferAllocator;
 const array_list = std.ArrayList;
 
 const self = @This();
@@ -38,10 +39,9 @@ Database: ?*c.hs_database_t,
 nDatabaseBytes: usize,
 Scratch: ?*c.hs_scratch_t,
 Ally: allocator,
+FBackBuf: []u8,
 
 CatBoxes: array_list(cat_box),
-MatchList: array_list(match), // TODO(cjb): Benchmark init. of this data strcuture within
-                                     // extract call instead of GracieInit
 LoadedPyModules: array_list(loaded_py_module),
 //
 // Possible status codes that may be returned during gracie calls.
@@ -115,7 +115,7 @@ fn ErrToCode(Err: anyerror) c_int
 export fn GracieInit(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
 {
     var Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
-    var Ally = std.heap.c_allocator;
+    var Ally = std.heap.page_allocator;
     Self.?.* = Ally.create(self) catch |Err|
         return ErrToCode(Err);
     Self.?.*.?.* = Init(Ally, ArtifactPathZ) catch |Err|
@@ -247,8 +247,8 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
         }
     }
 
-    // Initialize match list
-    Self.MatchList = array_list(match).init(Self.Ally);
+    // Initialize extractor scratch buffer
+    Self.FBackBuf = try Ally.alloc(u8, 1024*20);
 
     return Self;
 }
@@ -272,23 +272,32 @@ fn EventHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
 }
 
 export fn GracieExtract(Ctx: ?*?*anyopaque, Text: ?[*]const u8,
-    nTextBytes: c_uint) callconv(.C) c_int
+    nTextBytes: c_uint, Result: ?*[*]c_uint, n32sCopied: ?*c_uint) callconv(.C) c_int
 {
     var Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
-    Extract(Self.?.*.?, Text.?[0 .. nTextBytes]) catch |Err|
+    var ExtractResult = Extract(Self.?.*.?, Text.?[0 .. nTextBytes]) catch |Err|
         return ErrToCode(Err);
+
+    n32sCopied.?.* = @intCast(c_uint, ExtractResult.len);
+    Result.?.* = @ptrCast([*]c_uint, ExtractResult.ptr);
     return GRACIE_SUCCESS;
 }
 
-pub fn Extract(Self: *self, Text: []const u8) !void
+pub fn Extract(Self: *self, Text: []const u8) ![]u32
 {
-    // Reset MatchList)
-    Self.MatchList.clearRetainingCapacity();
+    // Initialize fixed buffer allocator from scratch space.
+    var FBufAlly = fixed_buffer_allocator.init(Self.FBackBuf);
+
+    // Init MatchList
+    var MatchList = array_list(match).init(FBufAlly.allocator());
+
+    var Result: []u32 = try FBufAlly.allocator().alloc(u32, 1024*2); // 2kib for result
+    var n32sCopied: usize = 0;
 
     // Hyperscannnnn!!
     try HSCodeToErr(c.hs_scan(Self.Database, Text.ptr, @intCast(c_uint, Text.len), 0, Self.Scratch,
-            EventHandler, &Self.MatchList));
-    for (Self.MatchList.items) |M|
+            EventHandler, &MatchList));
+    for (MatchList.items) |M|
     {
         var MainModuleIndex: usize = undefined;
         for (Self.CatBoxes.items) |Cat|
@@ -299,9 +308,11 @@ pub fn Extract(Self: *self, Text: []const u8) !void
                 MainModuleIndex = Cat.MainPyModuleIndex;
             }
         }
-        try sempy.RunModule(Text[M.SO .. M.EO], Self.LoadedPyModules.items[MainModuleIndex].NameZ);
+        n32sCopied = try sempy.RunModule(Text[M.SO .. M.EO],
+            Self.LoadedPyModules.items[MainModuleIndex].NameZ, Result);
         break;
     }
+    return Result[0 .. n32sCopied];
 }
 
 export fn GracieDeinit(Ctx: ?*?*anyopaque) callconv(.C) c_int
@@ -319,22 +330,36 @@ pub fn Deinit(Self: *self) !void
     try HSCodeToErr(c.hs_free_scratch(Self.Scratch));
     Self.Ally.free(@ptrCast([*]u8, Self.Database.?)[0 .. Self.nDatabaseBytes]);
 
-    for (Self.LoadedPyModules.items) |Mod| Self.Ally.free(Mod.NameZ);
-    Self.LoadedPyModules.deinit();
-
-    Self.MatchList.deinit();
+    Self.Ally.free(Self.FBackBuf);
 
     for (Self.CatBoxes.items) |Cat| Self.Ally.free(Cat.CategoryName);
     Self.CatBoxes.deinit();
 
     // Deinitialize sempy
-    try sempy.Deinit();
+    //try sempy.Deinit(); FIXME(cjb): whyyyyy!!!
+
+    for (Self.LoadedPyModules.items) |Mod| Self.Ally.free(Mod.NameZ);
+    Self.LoadedPyModules.deinit();
 }
 
-test "Gracie"
+test "Gracie C"
 {
-    var Ally = std.testing.allocator;
-    var G = try self.Init(Ally, "./data/gracie.bin");
-    try self.Extract(&G, "Earn $300 an hour");
-    try self.Deinit(&G);
+    var G: ?*anyopaque = undefined;
+    debug.assert(GracieInit(&G, "./data/gracie.bin") == GRACIE_SUCCESS);
+    const Text = "Earn $30 an hour";
+    debug.assert(GracieExtract(&G, Text, Text.len) == GRACIE_SUCCESS);
+    debug.assert(GracieDeinit(&G) == GRACIE_SUCCESS);
 }
+
+//test "Gracie"
+//{
+//    var Ally = std.testing.allocator;
+//    var BackingBuf = try Ally.alloc(u8, 0x1000*9);
+//    defer Ally.free(BackingBuf);
+//    var SAlly = slab_allocator.Init(BackingBuf);
+//    var G = try self.Init(SAlly.Allocator(), "./data/gracie.bin");
+//    try self.Extract(&G, "Earn $30 an hour");
+//
+//    slab_allocator.DEBUGSlabVisularizer(&SAlly);
+//    try self.Deinit(&G);
+//}

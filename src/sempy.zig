@@ -5,6 +5,10 @@ const c = @cImport({
     @cInclude("Python.h");
 });
 
+// BUG(cjb): Calling Init, Deinit than Init after loading & running a module results in a double free
+// from within the cpython api. Hopefully I'm doing something painfully wrong somewhere...
+// SEE: https://docs.python.org/3/c-api/intro.html#debugging-builds
+
 pub fn Init() !void
 {
     if (c.Py_IsInitialized() == 0)
@@ -18,7 +22,8 @@ pub fn Init() !void
 
 pub fn Deinit() !void
 {
-    if (c.Py_FinalizeEx() < 0)
+    _ = c.PyGC_Collect();
+    if (c.Py_FinalizeEx() != 0)
     {
         return error.SempyUnknown;
     }
@@ -40,27 +45,51 @@ pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !void
         return error.SempyInvalid;
     }
 
+    // Get dictonary of builtins from the current execution frame.
     const Builtins = c.PyEval_GetBuiltins();
-    const Compile = c.PyDict_GetItemString(Builtins, "compile");
-    const Code = c.PyObject_CallFunction(Compile, "sss", @ptrCast([* :0]const u8, SourceZ.ptr),
-        @ptrCast([* :0]const u8, NameZ.ptr), "exec");
-    if (Code != null)
+    if (Builtins == null)
     {
-        const Module = c.PyImport_ExecCodeModule(
-            @ptrCast([* :0]const u8, NameZ.ptr), Code);
-        defer c.Py_XDECREF(Module);
-        if (Module == null)
-        {
-            return error.SempyUnknown;
-        }
+        unreachable;
     }
-    c.Py_XDECREF(Code);
-    c.Py_DECREF(Compile);
-    c.Py_DECREF(Builtins);
+    defer c.Py_DECREF(Builtins);
+
+    // Lookup compile from builtins dictonary
+    const Compile = c.PyDict_GetItemString(Builtins, "compile");
+    if (Compile == null)
+    {
+        unreachable;
+    }
+    defer c.Py_DECREF(Compile);
+
+    // Compiles source code into an AST object.
+    const Code = c.PyObject_CallFunction(Compile, // function
+        "sss",                                    // arg format
+        @ptrCast([* :0]const u8, SourceZ.ptr),    // source code
+        @ptrCast([* :0]const u8, NameZ.ptr),      // filename
+        "exec"                                    // mode
+    );
+    if (c.PyErr_Occurred() != null)
+    {
+        c.PyErr_Print();
+        return error.SempyInvalid; //SempyBadSource
+    }
+    defer c.Py_DECREF(Code);
+
+    // Given a module name (possibly of the form package.module) and a code object read from
+    // the built-in function compile(), load the module.
+    const Module = c.PyImport_ExecCodeModule(@ptrCast([* :0]const u8, NameZ.ptr), Code);
+    defer c.Py_XDECREF(Module);
+    if (c.PyErr_Occurred() != null)
+    {
+        c.PyErr_Print();
+        return error.SempyInvalid; //SempyBadSource
+    }
 }
 
-pub fn RunModule(Text: []const u8, NameZ: []const u8) !void
+pub fn RunModule(Text: []const u8, NameZ: []const u8, OutBuf: []u32) !usize
 {
+    var Result: isize = 0;
+
     if (c.Py_IsInitialized() == 0)
     {
         return error.SempyUnknown;
@@ -82,7 +111,6 @@ pub fn RunModule(Text: []const u8, NameZ: []const u8) !void
 
             var pValue = c.PyUnicode_FromStringAndSize(Text.ptr, @intCast(isize, Text.len));
             defer c.Py_XDECREF(pValue);
-
             if (pValue == null)
             {
                 return error.SempyConvertArgsSempyMain;
@@ -92,18 +120,24 @@ pub fn RunModule(Text: []const u8, NameZ: []const u8) !void
                 unreachable;
             }
 
-//            pValue = c.PyLong_FromUnsignedLong(@intCast(c_ulong, CategoryID));
-//            if (pValue == null)
-//            {
-//                return error.SempyConvertArgs;
-//            }
+            // Call module's main
+            var pUni = c.PyObject_CallObject(pFunc, pArgs);
+            defer c.Py_DECREF(pUni);
 
-            pValue = c.PyObject_CallObject(pFunc, pArgs);
+            // Copy unicode object's bytes into OutBuf
+            Result = c.PyUnicode_AsWideChar(pUni, @ptrCast(?[*]c_int, OutBuf.ptr),
+                @intCast(isize, OutBuf.len));
+            if (Result == -1)
+            {
+                unreachable;
+            }
         }
     }
     if (c.PyErr_Occurred() != 0)
     {
-        c.PyErr_Print(); // TODO(cjb): Don't print this here.
+        c.PyErr_Print();
         return error.SempyUnknown;
     }
+
+    return @intCast(usize, Result);
 }
