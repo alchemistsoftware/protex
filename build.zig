@@ -5,10 +5,9 @@ pub fn build(B: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const Mode = B.standardReleaseOptions();
 
-    const Gracie = B.addSharedLibrary("gracie", "src/gracie.zig", B.version(0, 0, 1));
+    const Gracie = B.addSharedLibrary("gracie", "src/gracie.zig", B.version(0, 0, 4));
     Gracie.setBuildMode(Mode);
     Gracie.setOutputDir("./lib");
-    Gracie.addIncludePath("/usr/include/python3.11");
     Gracie.addIncludePath("/usr/include/hs/");
     Gracie.addIncludePath("./src");
     Gracie.addIncludePath("/usr/include/python3.11");
@@ -23,15 +22,33 @@ pub fn build(B: *std.build.Builder) void {
 
     const GracieTests = B.addTest("src/gracie.zig");
     GracieTests.setBuildMode(Mode);
+    GracieTests.setOutputDir("./bin");
     GracieTests.addIncludePath("/usr/include/hs/");
+    GracieTests.addIncludePath("./src");
+    GracieTests.addIncludePath("/usr/include/python3.11");
+    GracieTests.linkSystemLibrary("python3.11");
+    GracieTests.linkSystemLibrary("pthread");
+    GracieTests.linkSystemLibrary("dl");
+    GracieTests.linkSystemLibrary("util");
+    GracieTests.linkSystemLibrary("m");
     GracieTests.linkSystemLibrary("hs_runtime");
     GracieTests.linkLibC();
 
     const SlabaTests = B.addTest("src/slab_allocator.zig");
     SlabaTests.setBuildMode(Mode);
 
+    const SempyTests = B.addTest("src/sempy.zig");
+    SempyTests.setBuildMode(Mode);
+    SempyTests.addIncludePath("/usr/include/python3.11");
+    SempyTests.linkSystemLibrary("python3.11");
+    SempyTests.linkSystemLibrary("pthread");
+    SempyTests.linkSystemLibrary("dl");
+    SempyTests.linkSystemLibrary("util");
+    SempyTests.linkSystemLibrary("m");
+
     const TestStep = B.step("test", "Run library tests");
     TestStep.dependOn(&SlabaTests.step);
+    TestStep.dependOn(&SempyTests.step);
     TestStep.dependOn(&GracieTests.step);
 
     // Packager exe

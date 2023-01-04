@@ -2,7 +2,21 @@
 
 This project adheres to [semver](https://semver.org/)
 
-## [unreleased] - 12-30-22
+## [0.0.4-alpha] - 01-04-23
+### Fixed
+- Gracie unit test
+- Memory leaks caused by moving off of a backing buffer.
+
+### Added
+- Loading of arbitrary python modules
+- CatBoxes...
+
+### Changed
+- Instances of Text paramaters are now marked as constant.
+- Decoupled python modules from category definition blocks.
+- Sempy now writes main module output to a buffer which is then exposed through extract api.
+
+## [0.0.3-alpha] - 12-31-22
 ### Changed
 - Artifact structure, the packager and deserializer now handle new artifact structure
 - Improved error handling
