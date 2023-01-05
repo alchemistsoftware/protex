@@ -21,11 +21,6 @@ const match = struct
     ID: c_uint,
 };
 
-const loaded_py_module = struct
-{
-    NameZ: []u8,
-};
-
 // TODO(cjb): Loaded extractors buf...
 const cat_box = struct
 {
@@ -42,7 +37,7 @@ Ally: allocator,
 FBackBuf: []u8,
 
 CatBoxes: array_list(cat_box),
-LoadedPyModules: array_list(loaded_py_module),
+PyCallbacks: array_list(sempy.callback_fn),
 //
 // Possible status codes that may be returned during gracie calls.
 //
@@ -146,35 +141,32 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
     try sempy.Init();
 
     // Future sempy run calls will require module name so we will store them here.
-    Self.LoadedPyModules = array_list(loaded_py_module).init(Self.Ally);
+    Self.PyCallbacks = array_list(sempy.callback_fn).init(Self.Ally);
 
     var PyModIndex: usize = 0;
     while (PyModIndex < ArtiHeader.nPyModules) : (PyModIndex += 1)
     {
         const PyModHeader = try ArtiF.reader().readStruct(common.arti_py_module_header);
 
-        // Make loaded module & new NameZ buf.
-        var LoadedMod = loaded_py_module{
-            .NameZ = try Self.Ally.alloc(u8, PyModHeader.nPyNameBytes + 1),
-        };
-
-        // Code buf
+        // NameZ buf & code buf
+        var NameZ = try Self.Ally.alloc(u8, PyModHeader.nPyNameBytes + 1);
+        defer Self.Ally.free(NameZ);
         var SourceZ = try Self.Ally.alloc(u8, PyModHeader.nPySourceBytes + 1);
-        defer Self.Ally.free(SourceZ); // Uneeded after sempy load call.
+        defer Self.Ally.free(SourceZ);
 
         // Read name & code
-        debug.assert(try ArtiF.readAll(LoadedMod.NameZ[0 .. PyModHeader.nPyNameBytes]) ==
+        debug.assert(try ArtiF.readAll(NameZ[0 .. PyModHeader.nPyNameBytes]) ==
             PyModHeader.nPyNameBytes);
         debug.assert(try ArtiF.readAll(SourceZ[0 .. PyModHeader.nPySourceBytes]) ==
             PyModHeader.nPySourceBytes);
 
         // Null terminate both name & code buffers.
-        LoadedMod.NameZ[LoadedMod.NameZ.len - 1] = 0;
+        NameZ[NameZ.len - 1] = 0;
         SourceZ[SourceZ.len - 1] = 0;
 
         // Attempt to load module & append to module list.
-        try sempy.LoadModuleFromSource(LoadedMod.NameZ, SourceZ);
-        try Self.LoadedPyModules.append(LoadedMod);
+        const CallbackFn = try sempy.LoadModuleFromSource(NameZ, SourceZ);
+        try Self.PyCallbacks.append(CallbackFn);
     }
 
     // Read n extractor definitions
@@ -308,26 +300,43 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u32
                 MainModuleIndex = Cat.MainPyModuleIndex;
             }
         }
-        n32sCopied = try sempy.RunModule(Text[M.SO .. M.EO],
-            Self.LoadedPyModules.items[MainModuleIndex].NameZ, Result);
+        n32sCopied = try sempy.Run(Self.PyCallbacks.items[MainModuleIndex],
+            Text[M.SO .. M.EO], Result);
         break;
     }
-    return Result[0 .. n32sCopied];
+
+    var ResultResult: []u8 = try FBufAlly.allocator().alloc(u8, 1024*2); // 2kib for result
+    var SliceStream = std.io.fixedBufferStream(ResultResult);
+    var W = std.json.writeStream(SliceStream.writer(), 10);
+
+    try W.beginObject();
+    try W.objectField("Output");
+    try W.emitString(@ptrCast([*]const u8, Result.ptr)[0 .. n32sCopied*4]);
+    try W.endObject();
+
+    const Foo = SliceStream.getWritten();
+    //std.debug.print("got codepoint {s}\n", .{Foo});
+    //var Utf8Iter = (try std.unicode.Utf8View.init(
+    //        @ptrCast([*]const u8, Foo.ptr)[0 .. n32sCopied*4])).iterator();
+    //while (Utf8Iter.nextCodepointSlice()) |Codepoint|
+    //{
+    //    std.debug.print("got codepoint {s}\n", .{Codepoint});
+    //}
+    return Result[0 .. n32sCopied]; // SliceStream.getWritten();
 }
 
 export fn GracieDeinit(Ctx: ?*?*anyopaque) callconv(.C) c_int
 {
     const Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
-    Deinit(Self.?.*.?) catch |Err|
-        return ErrToCode(Err);
+    Deinit(Self.?.*.?);
     Self.?.*.?.Ally.destroy(Self.?.*.?);
     return GRACIE_SUCCESS;
 }
 
-pub fn Deinit(Self: *self) !void
+pub fn Deinit(Self: *self) void
 {
-    // Free hs scratch
-    try HSCodeToErr(c.hs_free_scratch(Self.Scratch));
+    // Free hs scratch and database
+    HSCodeToErr(c.hs_free_scratch(Self.Scratch)) catch unreachable;
     Self.Ally.free(@ptrCast([*]u8, Self.Database.?)[0 .. Self.nDatabaseBytes]);
 
     Self.Ally.free(Self.FBackBuf);
@@ -335,31 +344,30 @@ pub fn Deinit(Self: *self) !void
     for (Self.CatBoxes.items) |Cat| Self.Ally.free(Cat.CategoryName);
     Self.CatBoxes.deinit();
 
-    // Deinitialize sempy
-    //try sempy.Deinit(); FIXME(cjb): whyyyyy!!!
+    // TODO(cjb): Have sempy own PyCallbacks array list
+    for (Self.PyCallbacks.items) |CB| sempy.UnloadCallbackFn(CB);
+    Self.PyCallbacks.deinit();
 
-    for (Self.LoadedPyModules.items) |Mod| Self.Ally.free(Mod.NameZ);
-    Self.LoadedPyModules.deinit();
+    // Deinitialize sempy
+    sempy.Deinit();
 }
 
 test "Gracie C"
 {
     var G: ?*anyopaque = undefined;
-    debug.assert(GracieInit(&G, "./data/gracie.bin") == GRACIE_SUCCESS);
+    var Result: [*]c_uint = undefined;
+    var n32sCopied: c_uint = undefined;
     const Text = "Earn $30 an hour";
-    debug.assert(GracieExtract(&G, Text, Text.len) == GRACIE_SUCCESS);
+
+    debug.assert(GracieInit(&G, "./data/gracie.bin") == GRACIE_SUCCESS);
+    debug.assert(GracieExtract(&G, Text, Text.len, &Result, &n32sCopied) == GRACIE_SUCCESS);
     debug.assert(GracieDeinit(&G) == GRACIE_SUCCESS);
 }
 
-//test "Gracie"
-//{
-//    var Ally = std.testing.allocator;
-//    var BackingBuf = try Ally.alloc(u8, 0x1000*9);
-//    defer Ally.free(BackingBuf);
-//    var SAlly = slab_allocator.Init(BackingBuf);
-//    var G = try self.Init(SAlly.Allocator(), "./data/gracie.bin");
-//    try self.Extract(&G, "Earn $30 an hour");
-//
-//    slab_allocator.DEBUGSlabVisularizer(&SAlly);
-//    try self.Deinit(&G);
-//}
+test "Gracie"
+{
+    var Ally = std.testing.allocator;
+    var G = try self.Init(Ally, "./data/gracie.bin");
+    _ = try self.Extract(&G, "Earn $30 an hour"); // TODO(cjb): Print this..
+    self.Deinit(&G);
+}

@@ -2,6 +2,14 @@
 
 This project adheres to [semver](https://semver.org/)
 
+## [0.0.5-alpha]
+### Added
+- Readme
+
+### Fixed
+- Gracie unit test (again)
+- sempy init/deinit crash
+
 ## [0.0.4-alpha] - 01-04-23
 ### Fixed
 - Gracie unit test
