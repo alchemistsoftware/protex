@@ -2,7 +2,7 @@
 
 This project adheres to [semver](https://semver.org/)
 
-## [0.0.5-alpha]
+## [unreleased]
 ### Added
 - Readme
 
