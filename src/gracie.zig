@@ -21,30 +21,34 @@ const match = struct
     ID: c_uint,
 };
 
-const loaded_py_module = struct
-{
-    NameZ: []u8,
-};
-
-// TODO(cjb): Loaded extractors buf...
 const cat_box = struct
 {
-    CategoryName: []u8,
+    Name: []u8,
     MainPyModuleIndex: usize,
     StartPatternID: c_uint,
-    EndPatternID: c_uint, // Exclusive
+    EndPatternID: c_uint,
 };
 
-Database: ?*c.hs_database_t,
-nDatabaseBytes: usize,
+const extractor_def = struct
+{
+    Name: []u8,
+    Country: [2]u8,
+    Language: [2]u8,
+
+    CatBoxes: []cat_box,
+    Database: ?*c.hs_database_t,
+    nDatabaseBytes: usize,
+};
+
 Scratch: ?*c.hs_scratch_t,
 Ally: allocator,
 FBackBuf: []u8,
 
-CatBoxes: array_list(cat_box),
-LoadedPyModules: array_list(loaded_py_module),
+ExtrDefs: []extractor_def,
+PyCallbacks: array_list(sempy.callback_fn), //TODO(cjb): slice of py callbacks
+
 //
-// Possible status codes that may be returned during gracie calls.
+// Possible status codes that may be returned during calls to C api.
 //
 
 /// Call was executed successfully
@@ -123,21 +127,20 @@ export fn GracieInit(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv
     return GRACIE_SUCCESS;
 }
 
-pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
+pub fn Init(Ally: allocator, ArtifactPathZ: ?[* :0]const u8) !self
 {
     var Self: self = undefined;
     Self.Ally = Ally;
 
-//
-// Deserialize artifact
-//
-    // Open artifact file
+    // Open artifact file and obtain header in order to begin parsing.
     var PathLen: usize = 0;
     while (ArtifactPathZ.?[PathLen] != 0) { PathLen += 1; }
-    const ArtiF = try std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{});
 
-    // Read artifact header
-    const ArtiHeader = try ArtiF.reader().readStruct(common.arti_header);
+    const ArtiF = try std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{});
+    defer ArtiF.close();
+
+    const R = ArtiF.reader();
+    const ArtiHeader = try R.readStruct(common.arti_header);
 
 //
 // Read python module data and pass it to sempy for loading.
@@ -146,53 +149,56 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
     try sempy.Init();
 
     // Future sempy run calls will require module name so we will store them here.
-    Self.LoadedPyModules = array_list(loaded_py_module).init(Self.Ally);
+    Self.PyCallbacks = array_list(sempy.callback_fn).init(Self.Ally);
 
     var PyModIndex: usize = 0;
     while (PyModIndex < ArtiHeader.nPyModules) : (PyModIndex += 1)
     {
-        const PyModHeader = try ArtiF.reader().readStruct(common.arti_py_module_header);
+        const PyModHeader = try R.readStruct(common.arti_py_module_header);
 
-        // Make loaded module & new NameZ buf.
-        var LoadedMod = loaded_py_module{
-            .NameZ = try Self.Ally.alloc(u8, PyModHeader.nPyNameBytes + 1),
-        };
-
-        // Code buf
+        // NameZ buf & code buf
+        var NameZ = try Self.Ally.alloc(u8, PyModHeader.nPyNameBytes + 1);
+        defer Self.Ally.free(NameZ);
         var SourceZ = try Self.Ally.alloc(u8, PyModHeader.nPySourceBytes + 1);
-        defer Self.Ally.free(SourceZ); // Uneeded after sempy load call.
+        defer Self.Ally.free(SourceZ);
 
         // Read name & code
-        debug.assert(try ArtiF.readAll(LoadedMod.NameZ[0 .. PyModHeader.nPyNameBytes]) ==
+        debug.assert(try R.readAll(NameZ[0 .. PyModHeader.nPyNameBytes]) ==
             PyModHeader.nPyNameBytes);
-        debug.assert(try ArtiF.readAll(SourceZ[0 .. PyModHeader.nPySourceBytes]) ==
+        debug.assert(try R.readAll(SourceZ[0 .. PyModHeader.nPySourceBytes]) ==
             PyModHeader.nPySourceBytes);
 
         // Null terminate both name & code buffers.
-        LoadedMod.NameZ[LoadedMod.NameZ.len - 1] = 0;
+        NameZ[NameZ.len - 1] = 0;
         SourceZ[SourceZ.len - 1] = 0;
 
         // Attempt to load module & append to module list.
-        try sempy.LoadModuleFromSource(LoadedMod.NameZ, SourceZ);
-        try Self.LoadedPyModules.append(LoadedMod);
+        const CallbackFn = try sempy.LoadModuleFromSource(NameZ, SourceZ);
+        try Self.PyCallbacks.append(CallbackFn);
     }
 
-    // Read n extractor definitions
+//
+// Read extractor definitions
+//
+    Self.ExtrDefs = try Self.Ally.alloc(extractor_def, ArtiHeader.nExtractorDefs);
+
     var ExtractorDefIndex: usize = 0;
     while (ExtractorDefIndex < ArtiHeader.nExtractorDefs) : (ExtractorDefIndex += 1)
     {
-        // Read definition header
-        const DefHeader = try ArtiF.reader().readStruct(common.arti_def_header);
+        const DefHeader = try R.readStruct(common.arti_def_header);
+        var ExtrDef: extractor_def = undefined;
 
-        // TODO(cjb): Store these values somewhere
-        var Country: [2]u8 = undefined;
-        var Language: [2]u8 = undefined;
-        try ArtiF.reader().skipBytes(Language.len + Country.len + DefHeader.nExtractorNameBytes, .{});
+        // Read country, language, and name
+        debug.assert(try R.readAll(&ExtrDef.Country) == 2);
+        debug.assert(try R.readAll(&ExtrDef.Language) == 2);
+        ExtrDef.Name = try Self.Ally.alloc(u8, DefHeader.nExtractorNameBytes);
+        debug.assert(try R.readAll(ExtrDef.Name) == DefHeader.nExtractorNameBytes);
 
-        // Read serialized database
+        // Read serialized database NOTE(cjb): Can I just pass this to deserailze at instead of
+        // allocing a buffer then passing?
         var SerializedBytes = try Self.Ally.alloc(u8, DefHeader.DatabaseSize);
         defer Self.Ally.free(SerializedBytes);
-        debug.assert(try ArtiF.reader().readAll(SerializedBytes) == DefHeader.DatabaseSize);
+        debug.assert(try R.readAll(SerializedBytes) == DefHeader.DatabaseSize);
 
         // TODO(cjb): hs_set_misc_allocator():
             //var HSAlloc: c.hs_alloc_t = Bannans;
@@ -202,49 +208,51 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[*:0]const u8) !self
             // hs_error_t hs_set_allocator(hs_alloc_t alloc_func, hs_free_t free_func)
 
         var DatabaseBuf = try Self.Ally.alloc(u8, DefHeader.DatabaseSize);
-        Self.Database = @ptrCast(*c.hs_database_t, @alignCast(@alignOf(c.hs_database_t),
+        ExtrDef.Database = @ptrCast(*c.hs_database_t, @alignCast(@alignOf(c.hs_database_t),
                 DatabaseBuf.ptr));
-        Self.nDatabaseBytes = DefHeader.DatabaseSize;
-        try HSCodeToErr(c.hs_deserialize_database_at(SerializedBytes.ptr, SerializedBytes.len,
-            Self.Database));
+        ExtrDef.nDatabaseBytes = DefHeader.DatabaseSize;
+        try HSCodeToErr(c.hs_deserialize_database_at(SerializedBytes.ptr, DefHeader.DatabaseSize,
+            ExtrDef.Database));
 
         // TODO(cjb): set allocator used for scratch
         Self.Scratch = null;
-        try HSCodeToErr(c.hs_alloc_scratch(Self.Database, &Self.Scratch));
+        try HSCodeToErr(c.hs_alloc_scratch(ExtrDef.Database, &Self.Scratch));
 
 //
 // Read category data
 //
-        Self.CatBoxes = array_list(cat_box).init(Ally);
+        ExtrDef.CatBoxes = try Self.Ally.alloc(cat_box, DefHeader.nCategories);
 
         var PatternSum: usize = 0;
         var CatIndex: usize = 0;
         while (CatIndex < DefHeader.nCategories) : (CatIndex += 1)
         {
-            const CatHeader = try ArtiF.reader().readStruct(common.arti_cat_header);
+            const CatHeader = try R.readStruct(common.arti_cat_header);
 
             // Category name
-            var CategoryName = try Ally.alloc(u8, CatHeader.nCategoryNameBytes);
-            debug.assert(try ArtiF.readAll(CategoryName) == CatHeader.nCategoryNameBytes);
+            var Name = try Ally.alloc(u8, CatHeader.nCategoryNameBytes);
+            debug.assert(try R.readAll(Name) == CatHeader.nCategoryNameBytes);
 
             // Pattern count
             var nPatternsForCategory: usize = undefined;
-            debug.assert(try ArtiF.readAll(@ptrCast([*]u8, &nPatternsForCategory)
+            debug.assert(try R.readAll(@ptrCast([*]u8, &nPatternsForCategory)
                     [0 .. @sizeOf(usize)]) == @sizeOf(usize));
             PatternSum += nPatternsForCategory;
 
             // Mainpy module index
             var MainPyModuleIndex: usize = undefined;
-            debug.assert(try ArtiF.readAll(@ptrCast([*]u8, &MainPyModuleIndex)
+            debug.assert(try R.readAll(@ptrCast([*]u8, &MainPyModuleIndex)
                     [0 .. @sizeOf(usize)]) == @sizeOf(usize));
 
-           try Self.CatBoxes.append(cat_box{
-               .CategoryName = CategoryName,
+           ExtrDef.CatBoxes[CatIndex] = cat_box{
+               .Name = Name,
                .MainPyModuleIndex = MainPyModuleIndex,
                .StartPatternID = @intCast(c_uint, PatternSum - nPatternsForCategory),
                .EndPatternID = @intCast(c_uint, PatternSum),
-           });
+           };
         }
+
+        Self.ExtrDefs[ExtractorDefIndex] = ExtrDef;
     }
 
     // Initialize extractor scratch buffer
@@ -272,94 +280,125 @@ fn EventHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
 }
 
 export fn GracieExtract(Ctx: ?*?*anyopaque, Text: ?[*]const u8,
-    nTextBytes: c_uint, Result: ?*[*]c_uint, n32sCopied: ?*c_uint) callconv(.C) c_int
+    nTextBytes: c_uint, Result: ?*[*]u8, nBytesCopied: ?*c_uint) callconv(.C) c_int
 {
     var Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
     var ExtractResult = Extract(Self.?.*.?, Text.?[0 .. nTextBytes]) catch |Err|
         return ErrToCode(Err);
 
-    n32sCopied.?.* = @intCast(c_uint, ExtractResult.len);
-    Result.?.* = @ptrCast([*]c_uint, ExtractResult.ptr);
+    nBytesCopied.?.* = @intCast(c_uint, ExtractResult.len);
+    Result.?.* = @ptrCast([*]u8, ExtractResult.ptr);
     return GRACIE_SUCCESS;
 }
 
-pub fn Extract(Self: *self, Text: []const u8) ![]u32
+pub fn Extract(Self: *self, Text: []const u8) ![]u8
 {
     // Initialize fixed buffer allocator from scratch space.
-    var FBufAlly = fixed_buffer_allocator.init(Self.FBackBuf);
+    var FBAlly = fixed_buffer_allocator.init(Self.FBackBuf);
 
     // Init MatchList
-    var MatchList = array_list(match).init(FBufAlly.allocator());
+    var MatchList = array_list(match).init(FBAlly.allocator());
 
-    var Result: []u32 = try FBufAlly.allocator().alloc(u32, 1024*2); // 2kib for result
-    var n32sCopied: usize = 0;
+    // Allocate buffer for SempyRun output
+    var SempyRunBuf = try FBAlly.allocator().alloc(u8, 1024*1);
 
-    // Hyperscannnnn!!
-    try HSCodeToErr(c.hs_scan(Self.Database, Text.ptr, @intCast(c_uint, Text.len), 0, Self.Scratch,
-            EventHandler, &MatchList));
-    for (MatchList.items) |M|
+    var Parser = std.json.Parser.init(FBAlly.allocator(), false); // Copy strings = false
+    var ReturnBuf: []u8 = try FBAlly.allocator().alloc(u8, 1024*2); // 2kib for json buffer
+    var SliceStream = std.io.fixedBufferStream(ReturnBuf);
+    var W = std.json.writeStream(SliceStream.writer(), 5);
+    try W.beginObject();
+
+    for (Self.ExtrDefs) |Def|
     {
-        var MainModuleIndex: usize = undefined;
-        for (Self.CatBoxes.items) |Cat|
+        var nBytesCopied: usize = 0;
+        MatchList.clearRetainingCapacity();
+        Parser.reset();
+
+        // Hyperscannnnn!!
+        try HSCodeToErr(c.hs_scan(Def.Database, Text.ptr, @intCast(c_uint, Text.len), 0, Self.Scratch,
+                EventHandler, &MatchList));
+        for (MatchList.items) |M|
         {
-            if ((M.ID >= Cat.StartPatternID) and
-                (M.ID < Cat.EndPatternID))
+            var MainModuleIndex: usize = undefined;
+            for (Def.CatBoxes) |Cat|
             {
-                MainModuleIndex = Cat.MainPyModuleIndex;
+                if ((M.ID >= Cat.StartPatternID) and
+                    (M.ID < Cat.EndPatternID))
+                {
+                    MainModuleIndex = Cat.MainPyModuleIndex;
+                }
             }
+            // TODO(cjb): Have sempy alloc a buffer for you.
+            nBytesCopied = try sempy.Run(Self.PyCallbacks.items[MainModuleIndex],
+                Text[M.SO .. M.EO], SempyRunBuf);
+            break;
         }
-        n32sCopied = try sempy.RunModule(Text[M.SO .. M.EO],
-            Self.LoadedPyModules.items[MainModuleIndex].NameZ, Result);
-        break;
+        try W.objectField(Def.Name);
+
+        // Verify writing a valid json string
+        if (std.json.validate(@ptrCast([*]const u8, SempyRunBuf.ptr)[0 .. nBytesCopied]))
+        {
+            const ParseTree = try Parser.parse(SempyRunBuf[0..nBytesCopied]);
+            const RootJsonObj = ParseTree.root;
+            try W.emitJson(RootJsonObj);
+        }
+        else
+        {
+            try W.emitString("Bad json");
+        }
     }
-    return Result[0 .. n32sCopied];
+    try W.endObject();
+
+    return SliceStream.getWritten();
 }
 
 export fn GracieDeinit(Ctx: ?*?*anyopaque) callconv(.C) c_int
 {
     const Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
-    Deinit(Self.?.*.?) catch |Err|
-        return ErrToCode(Err);
+    Deinit(Self.?.*.?);
     Self.?.*.?.Ally.destroy(Self.?.*.?);
     return GRACIE_SUCCESS;
 }
 
-pub fn Deinit(Self: *self) !void
+pub fn Deinit(Self: *self) void
 {
-    // Free hs scratch
-    try HSCodeToErr(c.hs_free_scratch(Self.Scratch));
-    Self.Ally.free(@ptrCast([*]u8, Self.Database.?)[0 .. Self.nDatabaseBytes]);
+    HSCodeToErr(c.hs_free_scratch(Self.Scratch)) catch unreachable;
 
     Self.Ally.free(Self.FBackBuf);
 
-    for (Self.CatBoxes.items) |Cat| Self.Ally.free(Cat.CategoryName);
-    Self.CatBoxes.deinit();
+    for (Self.ExtrDefs) |Def|
+    {
+        Self.Ally.free(Def.Name);
+        for (Def.CatBoxes) |Cat| Self.Ally.free(Cat.Name);
+        Self.Ally.free(Def.CatBoxes);
+        Self.Ally.free(@ptrCast([*]u8, Def.Database.?)[0 .. Def.nDatabaseBytes]);
+    }
+    Self.Ally.free(Self.ExtrDefs);
+
+    // TODO(cjb): Have sempy own PyCallbacks array list
+    for (Self.PyCallbacks.items) |CB| sempy.UnloadCallbackFn(CB);
+    Self.PyCallbacks.deinit();
 
     // Deinitialize sempy
-    //try sempy.Deinit(); FIXME(cjb): whyyyyy!!!
-
-    for (Self.LoadedPyModules.items) |Mod| Self.Ally.free(Mod.NameZ);
-    Self.LoadedPyModules.deinit();
+    sempy.Deinit();
 }
 
 test "Gracie C"
 {
     var G: ?*anyopaque = undefined;
-    debug.assert(GracieInit(&G, "./data/gracie.bin") == GRACIE_SUCCESS);
+    var Result: [*]u8 = undefined;
+    var nBytesCopied: c_uint = undefined;
     const Text = "Earn $30 an hour";
-    debug.assert(GracieExtract(&G, Text, Text.len) == GRACIE_SUCCESS);
+
+    debug.assert(GracieInit(&G, "./data/gracie.bin") == GRACIE_SUCCESS);
+    debug.assert(GracieExtract(&G, Text, Text.len, &Result, &nBytesCopied) == GRACIE_SUCCESS);
     debug.assert(GracieDeinit(&G) == GRACIE_SUCCESS);
 }
 
-//test "Gracie"
-//{
-//    var Ally = std.testing.allocator;
-//    var BackingBuf = try Ally.alloc(u8, 0x1000*9);
-//    defer Ally.free(BackingBuf);
-//    var SAlly = slab_allocator.Init(BackingBuf);
-//    var G = try self.Init(SAlly.Allocator(), "./data/gracie.bin");
-//    try self.Extract(&G, "Earn $30 an hour");
-//
-//    slab_allocator.DEBUGSlabVisularizer(&SAlly);
-//    try self.Deinit(&G);
-//}
+test "Gracie"
+{
+    var Ally = std.testing.allocator;
+    var G = try self.Init(Ally, "./data/gracie.bin");
+    _ = try self.Extract(&G, "Earn $30 an hour"); // TODO(cjb): Print this..
+    self.Deinit(&G);
+}

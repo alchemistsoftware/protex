@@ -2,6 +2,19 @@
 
 This project adheres to [semver](https://semver.org/)
 
+## [0.0.5-alpha] - 01-06-23
+### Added
+- a README
+- Full support for multiple extractor definitions.
+- Json parsing on returned value from python callbacks.
+
+### Changed
+- Sempy run now writes to a utf8 encoded byte buffer rather than a wchar buffer.
+
+### Fixed
+- Gracie unit test (again)
+- sempy init/deinit crash
+
 ## [0.0.4-alpha] - 01-04-23
 ### Fixed
 - Gracie unit test

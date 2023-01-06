@@ -1,13 +1,9 @@
-const std = @import("std");
-const self = @This();
 const c = @cImport({
     @cDefine("PY_SSIZE_T_CLEAN", {});
     @cInclude("Python.h");
 });
-
-// BUG(cjb): Calling Init, Deinit than Init after loading & running a module results in a double free
-// from within the cpython api. Hopefully I'm doing something painfully wrong somewhere...
-// SEE: https://docs.python.org/3/c-api/intro.html#debugging-builds
+const std = @import("std");
+const self = @This();
 
 pub fn Init() !void
 {
@@ -20,24 +16,29 @@ pub fn Init() !void
     return error.SempyUnknown;
 }
 
-pub fn Deinit() !void
+pub fn Deinit() void
 {
-    _ = c.PyGC_Collect();
     if (c.Py_FinalizeEx() != 0)
     {
-        return error.SempyUnknown;
+        unreachable;
     }
     return;
 }
 
-pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !void
+fn PrintAndClearErr() void
 {
-    //  Is uninitialized?
-    if (c.Py_IsInitialized() == 0)
-    {
-        return error.SempyUnknown;
-    }
+    c.PyErr_Print();
+    c.PyErr_Clear();
+}
 
+pub const callback_fn = struct
+{
+    FnPtr: *c.PyObject,
+};
+
+// TODO(cjb): return an optional callback for module's which don't have a main?
+pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !self.callback_fn
+{
     // Check params are null terminated
     if ((NameZ[NameZ.len - 1] != 0) or
         (SourceZ[SourceZ.len - 1] != 0))
@@ -68,9 +69,9 @@ pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !void
         @ptrCast([* :0]const u8, NameZ.ptr),      // filename
         "exec"                                    // mode
     );
-    if (c.PyErr_Occurred() != null)
+    if (Code == null)
     {
-        c.PyErr_Print();
+        self.PrintAndClearErr();
         return error.SempyInvalid; //SempyBadSource
     }
     defer c.Py_DECREF(Code);
@@ -78,66 +79,67 @@ pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !void
     // Given a module name (possibly of the form package.module) and a code object read from
     // the built-in function compile(), load the module.
     const Module = c.PyImport_ExecCodeModule(@ptrCast([* :0]const u8, NameZ.ptr), Code);
-    defer c.Py_XDECREF(Module);
-    if (c.PyErr_Occurred() != null)
+    if (Module == null)
     {
-        c.PyErr_Print();
-        return error.SempyInvalid; //SempyBadSource
+        self.PrintAndClearErr();
+        return error.SempyUnknown;
     }
+    defer c.Py_DECREF(Module);
+
+    // Get function ptr to module's main
+    var MainFnPtr = c.PyObject_GetAttrString(Module, "main");
+    if (MainFnPtr == null)
+    {
+        self.PrintAndClearErr();
+        return error.SempyInvalid; // Couldn't find module's main fn
+    }
+
+    c.Py_INCREF(MainFnPtr);
+    return self.callback_fn{.FnPtr = MainFnPtr};
 }
 
-pub fn RunModule(Text: []const u8, NameZ: []const u8, OutBuf: []u32) !usize
+pub fn UnloadCallbackFn(Callback: self.callback_fn) void
 {
-    var Result: isize = 0;
+    c.Py_DECREF(Callback.FnPtr);
+}
 
-    if (c.Py_IsInitialized() == 0)
+pub fn Run(Callback: self.callback_fn, Text: []const u8, OutBuf: []u8) !usize
+{
+    var nBytesCopied: isize = undefined;
+
+    const Args = c.Py_BuildValue("(s#)", Text.ptr, @intCast(c.Py_ssize_t, Text.len));
+    if (Args == null)
     {
-        return error.SempyUnknown;
+        self.PrintAndClearErr();
+        return error.SempyConvertArgs;
+    }
+    defer c.Py_DECREF(Args);
+
+    var Result = c.PyObject_CallObject(Callback.FnPtr, Args);
+    if (Result == null)
+    {
+        self.PrintAndClearErr();
+        return error.SempyInvalid; // Bad return
+    }
+    defer c.Py_DECREF(Result);
+
+    // Convert unicode into utf8 encoded string.
+    var UTF8EncodedStr = c.PyUnicode_AsUTF8AndSize(Result, &nBytesCopied);
+    if ((UTF8EncodedStr == null) or
+        (nBytesCopied < 0))
+    {
+        self.PrintAndClearErr();
+        return error.SempyUnknown; // Couldn't convert to utf8?
     }
 
-    const pName = c.PyUnicode_DecodeFSDefault(@ptrCast([* :0]const u8, NameZ.ptr));
-    defer c.Py_XDECREF(pName);
-
-    const pModule = c.PyImport_Import(pName);
-    defer c.Py_XDECREF(pModule);
-    if (pModule != null)
+    // Copy bytes into buf
+    if (@intCast(usize, nBytesCopied) > OutBuf.len)
     {
-        const pFunc = c.PyObject_GetAttrString(pModule, "main");
-        defer c.Py_DECREF(pFunc);
-        if (pFunc != null)
-        {
-            const pArgs = c.PyTuple_New(1);
-            defer c.Py_DECREF(pArgs);
-
-            var pValue = c.PyUnicode_FromStringAndSize(Text.ptr, @intCast(isize, Text.len));
-            defer c.Py_XDECREF(pValue);
-            if (pValue == null)
-            {
-                return error.SempyConvertArgsSempyMain;
-            }
-            if (c.PyTuple_SetItem(pArgs, 0, pValue) == -1)
-            {
-                unreachable;
-            }
-
-            // Call module's main
-            var pUni = c.PyObject_CallObject(pFunc, pArgs);
-            defer c.Py_DECREF(pUni);
-
-            // Copy unicode object's bytes into OutBuf
-            Result = c.PyUnicode_AsWideChar(pUni, @ptrCast(?[*]c_int, OutBuf.ptr),
-                @intCast(isize, OutBuf.len));
-            if (Result == -1)
-            {
-                unreachable;
-            }
-        }
+        return error.SempyInvalid; // Out buf isn't big enough.
+                                   // NOTE(cjb): could pass ally instead and return slice?
     }
-    if (c.PyErr_Occurred() != 0)
-    {
-        c.PyErr_Print();
-        return error.SempyUnknown;
-    }
+    for (@ptrCast([*]const u8, UTF8EncodedStr)[0..@intCast(usize, nBytesCopied)]) |B, I|
+        OutBuf[I] = B;
 
-    return @intCast(usize, Result);
+    return @intCast(usize, nBytesCopied);
 }
