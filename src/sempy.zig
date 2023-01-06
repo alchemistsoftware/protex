@@ -103,9 +103,9 @@ pub fn UnloadCallbackFn(Callback: self.callback_fn) void
     c.Py_DECREF(Callback.FnPtr);
 }
 
-pub fn Run(Callback: self.callback_fn, Text: []const u8, OutBuf: []u32) !usize
+pub fn Run(Callback: self.callback_fn, Text: []const u8, OutBuf: []u8) !usize
 {
-    var n32sCopied: isize = 0;
+    var nBytesCopied: isize = undefined;
 
     const Args = c.Py_BuildValue("(s#)", Text.ptr, @intCast(c.Py_ssize_t, Text.len));
     if (Args == null)
@@ -123,13 +123,23 @@ pub fn Run(Callback: self.callback_fn, Text: []const u8, OutBuf: []u32) !usize
     }
     defer c.Py_DECREF(Result);
 
-    // Copy result object's bytes into OutBuf
-    n32sCopied = c.PyUnicode_AsWideChar(Result, @ptrCast(?[*]c_int, OutBuf.ptr),
-        @intCast(isize, OutBuf.len));
-    if (n32sCopied == -1)
+    // Convert unicode into utf8 encoded string.
+    var UTF8EncodedStr = c.PyUnicode_AsUTF8AndSize(Result, &nBytesCopied);
+    if ((UTF8EncodedStr == null) or
+        (nBytesCopied < 0))
     {
-        unreachable;
+        self.PrintAndClearErr();
+        return error.SempyUnknown; // Couldn't convert to utf8?
     }
 
-    return @intCast(usize, n32sCopied);
+    // Copy bytes into buf
+    if (@intCast(usize, nBytesCopied) > OutBuf.len)
+    {
+        return error.SempyInvalid; // Out buf isn't big enough.
+                                   // NOTE(cjb): could pass ally instead and return slice?
+    }
+    for (@ptrCast([*]const u8, UTF8EncodedStr)[0..@intCast(usize, nBytesCopied)]) |B, I|
+        OutBuf[I] = B;
+
+    return @intCast(usize, nBytesCopied);
 }

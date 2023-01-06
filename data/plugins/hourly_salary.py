@@ -6,4 +6,5 @@ def main(Text: str) -> str:
           Num = int(W[1:])
           break
     Num *= 8 * 5 * 4 * 12
-    return "{\"salary\":\"" + str(Num) + "\"}"
+    return '{"hourly_salary":' + str(Num) + '}'
+
