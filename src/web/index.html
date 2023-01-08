@@ -3,12 +3,14 @@
 <head>
 
 <style>
+    @font-face {
+        font-family: "Source Code Pro";
+        src: "./assets/static/SourceCodePro-Regular.ttf";
+    }
     *{
+        font-family: "Source Code Pro";
         padding: 0;
         margin: 0;
-    }
-    canvas{
-        image-rendering: crisp-edges;
     }
 
 </style>
@@ -20,9 +22,7 @@
 	<link rel="icon" href="./favicon.ico" type="image/x-icon">
 </head>
 <body>
-    <main>
-        <canvas id="canvas"></canvas>
-    </main>
+    <div id="acontainer"></div>
 	<script src="main.js"></script>
 </body>
 </html>
