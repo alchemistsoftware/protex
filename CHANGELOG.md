@@ -2,6 +2,10 @@
 
 This project adheres to [semver](https://semver.org/)
 
+## [unreleased] - ??
+### Added
+- Web interface
+
 ## [0.0.5-alpha] - 01-06-23
 ### Added
 - a README

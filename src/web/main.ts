@@ -1,3 +1,308 @@
+function Assert(Expr: boolean): void
+{
+    if (Expr == false)
+    {
+        throw "Assert fail";
+    }
+}
+function AddCatHandler(E: Event): void
+{
+    const EventElement = E.target as HTMLElement;
+    const ProbablyAnExtrDefItem = EventElement.parentElement;
+    if (ProbablyAnExtrDefItem == null)
+    {
+        throw "AddCatHandler's event's parent element was null";
+    }
+    if (ProbablyAnExtrDefItem.className != "extr-def-item")
+    {
+        throw "Tried to add a category to something that wasn't an 'extr-def-item'";
+    }
+
+    const CategoryFieldsContainer = document.createElement("div");
+    CategoryFieldsContainer.className = "cat-fields-container";
+    ProbablyAnExtrDefItem.appendChild(CategoryFieldsContainer);
+
+    const CategoryFieldsItem = document.createElement("div");
+    CategoryFieldsItem.className = "cat-fields-item";
+    CategoryFieldsContainer.appendChild(CategoryFieldsItem);
+
+    const CategoryNameInput = document.createElement("input");
+    CategoryNameInput.className = "cat-name";
+    CategoryFieldsItem.appendChild(CategoryNameInput);
+
+    // Main python module selector
+    const MainPyModuleSelect = document.createElement("select") as HTMLSelectElement;
+    MainPyModuleSelect.className = "main-py-module-select";
+    CategoryFieldsItem.appendChild(MainPyModuleSelect);
+
+    const PluginsDirInput = document.getElementById("plugins-dir-input") as HTMLInputElement;
+    if (PluginsDirInput == null)
+    {
+        throw "Couldn't get element 'plugins-dir-input'";
+    }
+
+    const Files = PluginsDirInput.files;
+    if (Files != null)
+    {
+        // Add avaliable python files
+        for (let FileIndex = 0;
+             FileIndex < Files.length;
+             ++FileIndex)
+        {
+            const File = Files.item(FileIndex);
+            if (File == null)
+            {
+                continue;
+            }
+            const PyModuleNameOption = document.createElement("option");
+            PyModuleNameOption.value = File.name;
+            PyModuleNameOption.text = File.name;
+            MainPyModuleSelect.add(PyModuleNameOption);
+        }
+    }
+
+    // Pattern inputs
+    const PatternsContainer = document.createElement("div");
+    PatternsContainer.className = "patterns-container";
+    CategoryFieldsItem.appendChild(PatternsContainer);
+
+    const AddPatternButton = document.createElement("button");
+    AddPatternButton.innerText = "New pattern";
+    AddPatternButton.onclick = AddPatternHandler;
+    PatternsContainer.appendChild(AddPatternButton);
+}
+
+function AddPatternHandler(E: Event): void
+{
+    const EventElement = E.target as HTMLElement;
+    const ProbablyAPatternsContainer = EventElement.parentElement;
+    if (ProbablyAPatternsContainer == null)
+    {
+        throw "AddCatHandler's event's parent element was null";
+    }
+    if (ProbablyAPatternsContainer.className != "patterns-container")
+    {
+        throw "Tried to add a pattern to something that wasn't a 'patterns-container'";
+    }
+
+    const PatternInput = document.createElement("input");
+    PatternInput.className = "pattern-input";
+    ProbablyAPatternsContainer.appendChild(PatternInput);
+}
+
+function AddExtrHandler(): void
+{
+    const ExtrDefsContainer = document.getElementById("extr-defs-container");
+    if (ExtrDefsContainer == null)
+    {
+        throw "Couldn't get div with id 'extr-defs-container'";
+    }
+
+    const ExtrNameInput = document.getElementById("extr-name-input") as HTMLInputElement;
+    if (ExtrNameInput == null)
+    {
+        throw "Couldn't get input with id 'extr-name-input'";
+    }
+
+    const ExtrCountryInput = document.getElementById("extr-country-input") as HTMLInputElement;
+    if (ExtrCountryInput == null)
+    {
+        throw "Couldn't get input with id 'extr-country-input'";
+    }
+
+    const ExtrLanguageInput = document.getElementById("extr-language-input") as HTMLInputElement;
+    if (ExtrLanguageInput == null)
+    {
+        throw "Couldn't get input with id 'extr-language-input'";
+    }
+
+    // Create new extractor definition item
+    const ExtrDefItem = document.createElement("div");
+    ExtrDefItem.className = "extr-def-item";
+    ExtrDefsContainer.appendChild(ExtrDefItem);
+
+    // Add name, country, and language to it.
+    const NewExtrNameInput = document.createElement("input") as HTMLInputElement;
+    NewExtrNameInput.className = "extr-name-input";
+    NewExtrNameInput.value = ExtrNameInput.value;
+    ExtrDefItem.appendChild(NewExtrNameInput);
+
+    const NewExtrCountryInput = document.createElement("input") as HTMLInputElement;
+    NewExtrCountryInput.className = "extr-country-input";
+    NewExtrCountryInput.maxLength = 2;
+    NewExtrCountryInput.value = ExtrCountryInput.value;
+    ExtrDefItem.appendChild(NewExtrCountryInput);
+
+    const NewExtrLanguageInput = document.createElement("input") as HTMLInputElement;
+    NewExtrLanguageInput.className = "extr-language-input";
+    NewExtrLanguageInput.value = ExtrLanguageInput.value;
+    NewExtrLanguageInput.maxLength = 2;
+    ExtrDefItem.appendChild(NewExtrLanguageInput);
+
+    // Reset name
+    ExtrNameInput.value = "";
+    ExtrCountryInput.value = ""
+    ExtrLanguageInput.value = ""
+
+    // Attach an add category button.
+    const AddCategoryButton = document.createElement("button");
+    AddCategoryButton.innerText = "New category";
+    AddCategoryButton.onclick = AddCatHandler;
+    ExtrDefItem.appendChild(AddCategoryButton);
+}
+
+function UpdatePyModuleSelectOptions()
+{
+    const PluginsDirInput = document.getElementById("plugins-dir-input") as HTMLInputElement;
+    if (PluginsDirInput == null)
+    {
+        throw "Couldn't get element 'plugins-dir-input'";
+    }
+
+    const Files = PluginsDirInput.files;
+    if (Files != null)
+    {
+        const MainPyModuleSelectors =
+            document.getElementsByClassName("main-py-module-select") as HTMLCollection;
+        for (let SelectorIndex = 0;
+             SelectorIndex < MainPyModuleSelectors.length;
+             ++SelectorIndex)
+        {
+            const Elem = MainPyModuleSelectors.item(SelectorIndex);
+            Assert(Elem != null);
+            const Selector = Elem as HTMLSelectElement;
+
+            // Clear options...
+            Selector.innerHTML = "";
+
+            // Add avaliable python files
+            for (let FileIndex = 0;
+                 FileIndex < Files.length;
+                 ++FileIndex)
+            {
+                const File = Files.item(FileIndex);
+                if (File == null)
+                {
+                    continue;
+                }
+                File.text().then(t => {console.log(t);});
+                const PyModuleNameOption = document.createElement("option");
+                PyModuleNameOption.value = File.name;
+                PyModuleNameOption.text = File.name;
+                Selector.add(PyModuleNameOption);
+            }
+        }
+    }
+}
+
+interface cat_def
+{
+    Name: string,
+    MainPyModule: string,
+    Patterns: Array<string>,
+};
+
+interface extr_def
+{
+    Name: string,
+    Country: string,
+    Language: string,
+    Categories: Array<cat_def>,
+};
+
+interface gracie_config
+{
+    PyIncludePath: string,
+    ExtractorDefinitions: Array<extr_def>,
+};
+
+function GetElementById(ElemId: string): HTMLElement
+{
+    const Elem = document.getElementById(ElemId);
+    if (Elem == null)
+    {
+        throw `Couldn't get element with id: '${ElemId}'`;
+    }
+    return Elem;
+}
+
+function GenJSONConfig(): string
+{
+    let RelPluginsDir: string = ".";
+    const PluginsDirInput = GetElementById("plugins-dir-input") as HTMLInputElement;
+    const Files = PluginsDirInput.files;
+    if (Files != null)
+    {
+        const FirstFile = Files.item(0);
+        if (FirstFile != null)
+        {
+            const SplitRelPath = FirstFile.webkitRelativePath.split('/');
+            for (let PathPartIndex=0;
+                 PathPartIndex < SplitRelPath.length - 1;
+                 ++PathPartIndex)
+            {
+                RelPluginsDir += '/' + SplitRelPath[PathPartIndex];
+            }
+        }
+    }
+    else
+    {
+        Assert(false);
+    }
+
+    let ExtrDefs: extr_def[] = [];
+    const ExtrDefsContainer = GetElementById("extr-defs-container");
+    for (const ExtrDefItem of ExtrDefsContainer.children)
+    {
+        const NameInput = ExtrDefItem.getElementsByClassName("extr-name-input")
+            .item(0) as HTMLInputElement | null;
+        Assert(NameInput != null);
+
+        const CountryInput = ExtrDefItem.getElementsByClassName("extr-country-input")
+            .item(0) as HTMLInputElement | null;
+        Assert(CountryInput != null);
+
+        const LanguageInput = ExtrDefItem.getElementsByClassName("extr-language-input")
+            .item(0) as HTMLInputElement | null;
+        Assert(LanguageInput != null);
+
+        let CatDefs: cat_def[] = [];
+        const CategoryFieldsContainer = ExtrDefItem.getElementsByClassName("cat-fields-container")
+            .item(0) as HTMLInputElement | null;
+        Assert(CategoryFieldsContainer != null);
+
+        for (const CatItem of (CategoryFieldsContainer as HTMLInputElement).children)
+        {
+            const CatNameInput = CatItem.getElementsByClassName("cat-name-input")
+                .item(0) as HTMLInputElement | null;
+            Assert(CatNameInput != null);
+
+            const MainPyModuleSelect = CatItem.getElementsByClassName("main-py-module-select")
+                .item(0) as HTMLInputElement | null;
+            Assert(MainPyModuleSelect != null);
+
+            CatDefs.push({
+                Name: (CatNameInput as HTMLInputElement).value,
+                MainPyModule: (MainPyModuleSelect as HTMLInputElement).value,
+                Patterns: ["Bannanas!"],
+            });
+        }
+
+        const NewExtrDef: extr_def = {
+            Name: (NameInput as HTMLInputElement).value,
+            Country: (CountryInput as HTMLInputElement).value,
+            Language: (LanguageInput as HTMLInputElement).value,
+            Categories: [],
+        };
+
+        ExtrDefs.push(NewExtrDef); // left off here... FIXME(cjb): this is broken?
+    }
+
+    let ConfigObj: gracie_config = {PyIncludePath: RelPluginsDir, ExtractorDefinitions: ExtrDefs};
+    console.log(JSON.stringify(ConfigObj));
+    return JSON.stringify(ConfigObj);
+}
+
 function Init(): void
 {
     const AContainer = document.getElementById("acontainer")
@@ -11,60 +316,45 @@ function Init(): void
     TA.innerText = SampleText;
     AContainer.appendChild(TA);
 
-    const ExtractorFieldsContainer = document.createElement("div");
-    ExtractorFieldsContainer.id = "extractor-fields-container";
-    AContainer.appendChild(ExtractorFieldsContainer);
+    const PluginsDirInput = document.createElement("input") as HTMLInputElement;
+    PluginsDirInput.id = "plugins-dir-input";
+    PluginsDirInput.type = "file";
+    PluginsDirInput.setAttribute("webkitdirectory", "true");
+    PluginsDirInput.setAttribute("multiple", "true");
+    PluginsDirInput.onchange = UpdatePyModuleSelectOptions;
+    AContainer.appendChild(PluginsDirInput);
 
-    const ExtractorNameInput = document.createElement("input");
-    ExtractorNameInput.name = "extractor_name";
-    ExtractorFieldsContainer.appendChild(ExtractorNameInput);
+    const NewExtrDefFieldsContainer = document.createElement("div");
+    NewExtrDefFieldsContainer.id = "new-extr-def-fields-container";
+    AContainer.appendChild(NewExtrDefFieldsContainer);
 
-    const ExtractorCountryInput = document.createElement("input");
-    ExtractorCountryInput.name = "extractor_country";
-    ExtractorCountryInput.maxLength = 2;
-    ExtractorFieldsContainer.appendChild(ExtractorCountryInput);
+    const ExtrNameInput = document.createElement("input");
+    ExtrNameInput.id = "extr-name-input";
+    NewExtrDefFieldsContainer.appendChild(ExtrNameInput);
 
-    const ExtractorLanguageInput = document.createElement("input");
-    ExtractorLanguageInput.name = "extractor_language";
-    ExtractorLanguageInput.maxLength = 2;
-    ExtractorFieldsContainer.appendChild(ExtractorLanguageInput);
+    const ExtrCountryInput = document.createElement("input");
+    ExtrCountryInput.id = "extr-country-input";
+    ExtrCountryInput.maxLength = 2;
+    NewExtrDefFieldsContainer.appendChild(ExtrCountryInput);
 
-    const AddExtractorButton = document.createElement("button");
-    AddExtractorButton.innerText = "New extractor";
-    ExtractorFieldsContainer.appendChild(AddExtractorButton);
+    const ExtrLanguageInput = document.createElement("input");
+    ExtrLanguageInput.id = "extr-language-input";
+    ExtrLanguageInput.maxLength = 2;
+    NewExtrDefFieldsContainer.appendChild(ExtrLanguageInput);
 
-    const AddCategoryButton = document.createElement("button");
-    AddCategoryButton.innerText = "New category";
-    AddCategoryButton.onclick = () =>
-    {
-        const CategoryFieldsContainer = document.getElementById("category-fields-container");
-        if (CategoryFieldsContainer == null)
-        {
-            throw "Couldn't get div with id 'category-fields-container'";
-        }
+    const AddExtrButton = document.createElement("button");
+    AddExtrButton.innerText = "New extractor";
+    AddExtrButton.onclick = AddExtrHandler;
+    NewExtrDefFieldsContainer.appendChild(AddExtrButton);
 
-        const CategoryFieldsItem = document.createElement("div");
-        CategoryFieldsItem.className = "category-fields-item";
-        CategoryFieldsContainer.appendChild(CategoryFieldsItem);
+    const ExtrDefsContainer = document.createElement("div");
+    ExtrDefsContainer.id = "extr-defs-container";
+    AContainer.appendChild(ExtrDefsContainer);
 
-        const CategoryNameInput = document.createElement("input");
-        CategoryNameInput.name = "categroy_name";
-        CategoryFieldsItem.appendChild(CategoryNameInput);
-
-        const MainPyModuleInput = document.createElement("input");
-        MainPyModuleInput.name = "main_py_module";
-        CategoryFieldsItem.appendChild(MainPyModuleInput);
-    };
-    ExtractorFieldsContainer.appendChild(AddCategoryButton);
-
-    const CategoryFieldsContainer = document.createElement("div");
-    CategoryFieldsContainer.id = "category-fields-container";
-    ExtractorFieldsContainer.appendChild(CategoryFieldsContainer);
-}
-
-/// Does various "setup-ee" things
-function Setup(): void
-{
+    const GenConfButton = document.createElement("button");
+    GenConfButton.innerText = "Generate config!";
+    GenConfButton.onclick = GenJSONConfig;
+    AContainer.appendChild(GenConfButton);
 }
 
 Init();
