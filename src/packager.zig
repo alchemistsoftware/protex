@@ -52,10 +52,9 @@ pub fn main() !void
     const FigF = try std.fs.cwd().openFile(ConfPathZ, .{});
     var ConfBytes = try FigF.reader().readAllAlloc(Ally, 1024*10); // 10kib should be enough
     defer Ally.free(ConfBytes);
-    var Parser = std.json.Parser.init(Ally, false);
-    const ParseTree = try Parser.parse(ConfBytes);
-    const PyIncludePath = ParseTree.root.Object.get("py_include_path") orelse unreachable;
-    const Extractors = ParseTree.root.Object.get("extractors") orelse unreachable;
+    var Parser = std.json.Parser.init(Ally, false); const ParseTree = try Parser.parse(ConfBytes);
+    const PyIncludePath = ParseTree.root.Object.get("PyIncludePath") orelse unreachable;
+    const Extractors = ParseTree.root.Object.get("ExtractorDefinitions") orelse unreachable;
 
 //
 // Create artifact file and write initial header.
@@ -148,13 +147,13 @@ pub fn main() !void
         // Each category has an associated python plugin file path as well as a few patterns which
         // are specific to a given category. For patterns this logic simply writes to the realavent
         // list used during the hs_compile_multi call.
-        var Categories = Extractor.Object.get("categories") orelse unreachable;
+        var Categories = Extractor.Object.get("Categories") orelse unreachable;
         for (Categories.Array.items) |Category|
         {
 
             // Parse json patterns
             const nExistingPatterns = PatternsZ.items.len;
-            const JSONPatterns = Category.Object.get("patterns") orelse unreachable;
+            const JSONPatterns = Category.Object.get("Patterns") orelse unreachable;
             for (JSONPatterns.Array.items) |Pattern, PatternIndex|
             {
                 // Allocate space for pattern + termiantor, copy existing pattern and drop in
@@ -204,9 +203,9 @@ pub fn main() !void
 // headers and their data as well.
 //
         // Snag country, langauge and extractor name.
-        const Country = Extractor.Object.get("country") orelse unreachable;
-        const Language = Extractor.Object.get("language") orelse unreachable;
-        const ExtractorName = Extractor.Object.get("name") orelse unreachable;
+        const Country = Extractor.Object.get("Country") orelse unreachable;
+        const Language = Extractor.Object.get("Language") orelse unreachable;
+        const ExtractorName = Extractor.Object.get("Name") orelse unreachable;
 
         // Verify country and langauge are digraphs
         if ((Country.String.len != 2) or
@@ -228,11 +227,11 @@ pub fn main() !void
 
         for (Categories.Array.items) |Cat|
         {
-            const Patterns = Cat.Object.get("patterns") orelse unreachable;
-            const CatName = Cat.Object.get("name") orelse unreachable;
+            const Patterns = Cat.Object.get("Patterns") orelse unreachable;
+            const CatName = Cat.Object.get("Name") orelse unreachable;
 
             // Read module name and compute index of MainPyModule within PyModuleNames.
-            const MainPyModule = Cat.Object.get("main_py_module") orelse unreachable;
+            const MainPyModule = Cat.Object.get("MainPyModule") orelse unreachable;
             const MainPyModuleNoExt = std.fs.path.stem(MainPyModule.String);
             var MainModuleIndex: isize = -1;
             for (PyModuleNames.items) |ModuleName, ModuleIndex|
