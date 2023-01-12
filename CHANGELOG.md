@@ -6,6 +6,9 @@ This project adheres to [semver](https://semver.org/)
 ### Added
 - Web client and server
 
+### Fixed
+- Throwing away scratch space refrence per database load.
+
 ## [0.0.5-alpha] - 01-06-23
 ### Added
 - a README

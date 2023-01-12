@@ -17,29 +17,30 @@ const ServeFileError = error {
     HeaderDidNotMatch,
 };
 
-fn ServeFile(stream: *const net.Stream, dir: fs.Dir) !void {
-    var recv_buf: [BUFSIZ]u8 = undefined;
-    var recv_total: usize = 0;
+fn ServeFile(Stream: *const net.Stream, dir: fs.Dir) !void
+{
+    var RecvBuf: [BUFSIZ]u8 = undefined;
+    var RecvTotal: usize = 0;
 
-    while (stream.read(recv_buf[recv_total..])) |recv_len| {
-        if (recv_len == 0)
+    while (Stream.read(RecvBuf[RecvTotal..])) |RecvLen| {
+        if (RecvLen == 0)
             return ServeFileError.RecvHeaderEOF;
 
-        recv_total += recv_len;
+        RecvTotal += RecvLen;
 
-        if (mem.containsAtLeast(u8, recv_buf[0..recv_total], 1, "\r\n\r\n"))
+        if (mem.containsAtLeast(u8, RecvBuf[0..RecvTotal], 1, "\r\n\r\n"))
             break;
 
-        if (recv_total >= recv_buf.len)
+        if (RecvTotal >= RecvBuf.len)
             return ServeFileError.RecvHeaderExceededBuffer;
     } else |read_err| {
         return read_err;
     }
 
-    const recv_slice = recv_buf[0..recv_total];
+    const recv_slice = RecvBuf[0..RecvTotal];
     std.log.info(" <<<\n{s}", .{recv_slice});
 
-    var file_path: []const u8 = undefined;
+    var FilePath: []const u8 = undefined;
     var tok_itr = mem.tokenize(u8, recv_slice, " ");
 
     if (!mem.eql(u8, tok_itr.next() orelse "", "GET"))
@@ -50,27 +51,26 @@ fn ServeFile(stream: *const net.Stream, dir: fs.Dir) !void {
         return ServeFileError.HeaderDidNotMatch;
 
     if (mem.eql(u8, path, "/"))
-        file_path = "index"
+        FilePath = "index"
     else
-        file_path = path[1..];
+        FilePath = path[1..];
 
     if (!mem.startsWith(u8, tok_itr.rest(), "HTTP/1.1\r\n"))
         return ServeFileError.HeaderDidNotMatch;
 
-    var file_ext = fs.path.extension(file_path);
+    var FileExt = fs.path.extension(FilePath);
     var path_buf: [fs.MAX_PATH_BYTES]u8 = undefined;
 
     const GETs = .{
         .PyIncludePath = "py-include-path",
     };
-
-    const http_head =
+    const HTTPHead =
         "HTTP/1.1 200 OK\r\n" ++
         "Connection: close\r\n" ++
         "Content-Type: {s}\r\n" ++
         "Content-Length: {}\r\n" ++
         "\r\n";
-    const mimes = .{
+    const Mimes = .{
         .{".html", "text/html"},
         .{".js", "text/javascript"},
         .{".css", "text/css"},
@@ -81,54 +81,72 @@ fn ServeFile(stream: *const net.Stream, dir: fs.Dir) !void {
     };
 
     // GET request
-    if (mem.eql(u8, file_path, GETs.PyIncludePath))
+    if (mem.eql(u8, FilePath, GETs.PyIncludePath))
     {
         const Mime: []const u8 = "application/json";
-        //TODO(cjb): json encoder... !!!!!!!!!!! LEFT OFF HERE !!!!!!!!!!!!!!!!!!!
-        const DEBUGWhatever =
-            "{\"PyIncludePath\":\"./plugins\", \"Entries\":[\"hourly_salary.py\"]}";
-        std.log.info(" >>>\n" ++ http_head, .{Mime, DEBUGWhatever.len});
-        try stream.writer().print(http_head, .{Mime, DEBUGWhatever.len});
-        try stream.writer().writeAll(DEBUGWhatever);
+
+        var ResBackBuf: [1024]u8 = undefined;
+        var ResFBS = io.fixedBufferStream(&ResBackBuf);
+        var W = std.json.writeStream(ResFBS.writer(), 4);
+
+        try W.beginObject();
+        try W.objectField("PyIncludePath");
+        try W.emitString("./plugins");
+        try W.objectField("Entries");
+        try W.beginArray();
+
+        var PluginsDir = try fs.cwd().openIterableDir("./data/plugins", .{});
+        defer PluginsDir.close();
+        var PluginsDirIterator = PluginsDir.iterate();
+        while (try PluginsDirIterator.next()) |Entry|
+        {
+            try W.arrayElem();
+            try W.emitString(Entry.name);
+        }
+        try W.endArray();
+        try W.endObject();
+
+        std.log.info(" >>>\n" ++ HTTPHead, .{Mime, ResFBS.getWritten().len});
+        try Stream.writer().print(HTTPHead, .{Mime, ResFBS.getWritten().len});
+        try Stream.writer().writeAll(ResFBS.getWritten());
     }
     else // Orelse handle serving up a file.
     {
-        if (file_ext.len == 0) {
+        if (FileExt.len == 0) {
             var path_fbs = io.fixedBufferStream(&path_buf);
 
-            try path_fbs.writer().print("{s}.html", .{file_path});
-            file_ext = ".html";
-            file_path = path_fbs.getWritten();
+            try path_fbs.writer().print("{s}.html", .{FilePath});
+            FileExt = ".html";
+            FilePath = path_fbs.getWritten();
         }
 
-        std.log.info("Opening {s}", .{file_path});
+        std.log.info("Opening {s}", .{FilePath});
 
-        var body_file = dir.openFile(file_path, .{}) catch |err| {
+        var body_file = dir.openFile(FilePath, .{}) catch |err| {
             const http_404 = "HTTP/1.1 404 Not Found\r\n\r\n404";
             std.log.info(" >>>\n" ++ http_404, .{});
-            try stream.writer().print(http_404, .{});
+            try Stream.writer().print(http_404, .{});
             return err;
         };
         defer body_file.close();
 
         const file_len = try body_file.getEndPos();
 
-        var mime: []const u8 = "text/plain";
-
-        inline for (mimes) |kv| {
-            if (mem.eql(u8, file_ext, kv[0]))
-                mime = kv[1];
+        var Mime: []const u8 = "text/plain";
+        inline for (Mimes) |KV| {
+            if (mem.eql(u8, FileExt, KV[0]))
+                Mime = KV[1];
         }
 
-        std.log.info(" >>>\n" ++ http_head, .{mime, file_len});
-        try stream.writer().print(http_head, .{mime, file_len});
+        std.log.info(" >>>\n" ++ HTTPHead, .{Mime, file_len});
+        try Stream.writer().print(HTTPHead, .{Mime, file_len});
 
         const zero_iovec = &[0]std.os.iovec_const{};
         var send_total: usize = 0;
 
         while (true) {
             const send_len = try std.os.sendfile(
-                stream.handle,
+                Stream.handle,
                 body_file.handle,
                 send_total,
                 file_len,
