@@ -3,89 +3,68 @@ function AddEmptyCat(ExtrDefItem: HTMLElement): void
     AddCat(ExtrDefItem, "", "", []);
 }
 
-function AddCat(ExtrDefItem: HTMLElement, Name: string, MainPyModule: string,
-    Patterns: string[]): void
+async function AddCat(ExtrDefItem: HTMLElement, Name: string, MainPyModule: string,
+    Patterns: string[]): Promise<void>
 {
-    const CategoryFieldsContainer = document.createElement("div");
-    CategoryFieldsContainer.className = "cat-fields-container";
-    ExtrDefItem.appendChild(CategoryFieldsContainer);
-
-    const CategoryFieldsItem = document.createElement("div");
-    CategoryFieldsItem.className = "cat-fields-item";
-    CategoryFieldsContainer.appendChild(CategoryFieldsItem);
-
-    const CategoryNameInput = document.createElement("input");
-    CategoryNameInput.className = "cat-name-input";
-    CategoryNameInput.value = Name;
-    CategoryFieldsItem.appendChild(CategoryNameInput);
-
-    // Main python module selector
-    const MainPyModuleSelect = document.createElement("select") as HTMLSelectElement;
-    MainPyModuleSelect.className = "main-py-module-select";
-    CategoryFieldsItem.appendChild(MainPyModuleSelect);
-
-    // BUG(cjb): duplicate main py module options
-    // TODO(cjb): Stop updating this way.
-    UpdatePyModuleSelectOptions();
-    let SelectIndex = 0
-    let AlreadyHadOption = false;
-    for (; SelectIndex < MainPyModuleSelect.children.length;
-         ++SelectIndex)
+    return new Promise(async (Res) =>
     {
-        const O = MainPyModuleSelect.children[SelectIndex] as HTMLOptionElement;
-        console.log(O.text);
-        if (O.text == MainPyModule)
+        const CategoryFieldsContainer = document.createElement("div");
+        CategoryFieldsContainer.className = "cat-fields-container";
+        ExtrDefItem.appendChild(CategoryFieldsContainer);
+
+        const CategoryFieldsItem = document.createElement("div");
+        CategoryFieldsItem.className = "cat-fields-item";
+        CategoryFieldsContainer.appendChild(CategoryFieldsItem);
+
+        const CategoryNameInput = document.createElement("input");
+        CategoryNameInput.className = "cat-name-input";
+        CategoryNameInput.value = Name;
+        CategoryFieldsItem.appendChild(CategoryNameInput);
+
+
+        // Main python module selector
+        const MainPyModuleSelect = document.createElement("select") as HTMLSelectElement;
+        MainPyModuleSelect.className = "main-py-module-select";
+        CategoryFieldsItem.appendChild(MainPyModuleSelect);
+
+        // NOTE(cjb): First selector added to document is source of truth for avaliable modules..
+        //  sot (source of truth)
+        let SOTSelector = document.getElementById(
+            "sot-main-py-module-select") as HTMLSelectElement | null;
+        if (SOTSelector == null)
         {
-            AlreadyHadOption = true;
-            break;
+            // Set sot id and ask server for options.
+            MainPyModuleSelect.id = "sot-main-py-module-select";
+            await PopulatePyModuleSelectOptions(MainPyModuleSelect);
         }
-    }
-    if (!AlreadyHadOption)
-    {
-        const PyModuleNameOption = document.createElement("option");
-        PyModuleNameOption.value = MainPyModule;
-        PyModuleNameOption.text = MainPyModule;
-        MainPyModuleSelect.add(PyModuleNameOption);
-    }
-    MainPyModuleSelect.selectedIndex = SelectIndex;
-
-    const PluginsDirInput = document.getElementById("plugins-dir-input") as HTMLInputElement;
-    if (PluginsDirInput == null)
-    {
-        throw "Couldn't get element 'plugins-dir-input'";
-    }
-
-    const Files = PluginsDirInput.files;
-    if (Files != null)
-    {
-        // Add avaliable python files
-        for (let FileIndex = 0;
-             FileIndex < Files.length;
-             ++FileIndex)
+        else // Copy SOT selector options
         {
-            const File = Files.item(FileIndex);
-            if (File == null)
+            for (let SelectIndex = 0;
+                 SelectIndex < SOTSelector.children.length;
+                 ++SelectIndex)
             {
-                continue;
+                const PyModuleNameOption = document.createElement("option");
+                PyModuleNameOption.text =
+                    (SOTSelector.children[SelectIndex] as HTMLOptionElement).text;
+                PyModuleNameOption.value =
+                    (SOTSelector.children[SelectIndex] as HTMLOptionElement).value;
+                MainPyModuleSelect.add(PyModuleNameOption);
             }
-            const PyModuleNameOption = document.createElement("option");
-            PyModuleNameOption.value = File.name;
-            PyModuleNameOption.text = File.name;
-            MainPyModuleSelect.add(PyModuleNameOption);
         }
-    }
 
-    // Pattern inputs
-    const PatternsContainer = document.createElement("div");
-    PatternsContainer.className = "patterns-container";
-    CategoryFieldsItem.appendChild(PatternsContainer);
+        // Pattern inputs
+        const PatternsContainer = document.createElement("div");
+        PatternsContainer.className = "patterns-container";
+        CategoryFieldsItem.appendChild(PatternsContainer);
 
-    const AddPatternButton = document.createElement("button");
-    AddPatternButton.innerText = "New pattern";
-    AddPatternButton.onclick = () => AddPattern(PatternsContainer, "");
-    PatternsContainer.appendChild(AddPatternButton);
+        const AddPatternButton = document.createElement("button");
+        AddPatternButton.innerText = "New pattern";
+        AddPatternButton.onclick = () => AddPattern(PatternsContainer, "");
+        PatternsContainer.appendChild(AddPatternButton);
 
-    for (const P of Patterns) AddPattern(PatternsContainer, P);
+        for (const P of Patterns) AddPattern(PatternsContainer, P);
+        Res();
+    });
 }
 
 function AddPattern(PatternsContainer: HTMLElement, Pattern: string): void
@@ -136,46 +115,22 @@ function AddExtr(ExtrName: string, Country: string, Language: string): HTMLEleme
     return ExtrDefItem;
 }
 
-function UpdatePyModuleSelectOptions()
+async function PopulatePyModuleSelectOptions(Selector: HTMLSelectElement): Promise<void>
 {
-    const PluginsDirInput = document.getElementById("plugins-dir-input") as HTMLInputElement;
-    if (PluginsDirInput == null)
+    return new Promise(async (Res) =>
     {
-        throw "Couldn't get element 'plugins-dir-input'";
-    }
+        Selector.innerText = "";
 
-    const Files = PluginsDirInput.files;
-    if (Files != null)
-    {
-        const MainPyModuleSelectors =
-            document.getElementsByClassName("main-py-module-select") as HTMLCollection;
-        for (let SelectorIndex = 0;
-             SelectorIndex < MainPyModuleSelectors.length;
-             ++SelectorIndex)
+        const PyEntries = (await GETIncludePathAndEntries()).Entries;
+        for (const PyModule of PyEntries)
         {
-            const Elem = MainPyModuleSelectors.item(SelectorIndex);
-            const Selector = Elem as HTMLSelectElement;
-
-            // Clear options...
-            Selector.innerText = "";
-
-            // Add avaliable python files
-            for (let FileIndex = 0;
-                 FileIndex < Files.length;
-                 ++FileIndex)
-            {
-                const File = Files.item(FileIndex);
-                if (File == null)
-                {
-                    continue;
-                }
-                const PyModuleNameOption = document.createElement("option");
-                PyModuleNameOption.value = File.name;
-                PyModuleNameOption.text = File.name;
-                Selector.add(PyModuleNameOption);
-            }
+            const PyModuleNameOption = document.createElement("option");
+            PyModuleNameOption.value = PyModule;
+            PyModuleNameOption.text = PyModule;
+            Selector.add(PyModuleNameOption);
         }
-    }
+        Res();
+    });
 }
 
 interface cat_def
@@ -199,7 +154,7 @@ interface gracie_config
     ExtractorDefinitions: extr_def[],
 };
 
-function GetElementById(ElemId: string): HTMLElement
+function GetElementByIDOrThrow(ElemId: string): HTMLElement
 {
     const Elem = document.getElementById(ElemId);
     if (Elem == null)
@@ -226,6 +181,7 @@ function ImportJSONConfig(E: Event): void
     Files[0].text().then(Text =>
     {
         const JSONConfig = JSON.parse(Text);
+        // TODO(cjb): Set pyincludepath
         for (const ExtrDef of JSONConfig.ExtractorDefinitions)
         {
             const ExtrDefElem = AddExtr(ExtrDef.Name, ExtrDef.Country, ExtrDef.Language);
@@ -237,84 +193,90 @@ function ImportJSONConfig(E: Event): void
     });
 }
 
-function GenJSONConfig(): string
+interface py_include_path_and_entries
 {
-    let RelPluginsDir: string = ".";
-    const PluginsDirInput = GetElementById("plugins-dir-input") as HTMLInputElement;
-    const Files = PluginsDirInput.files;
-    if (Files != null)
+    PyIncludePath: string,
+    Entries: string[],
+};
+
+async function GETIncludePathAndEntries(): Promise<py_include_path_and_entries>
+{
+    return new Promise((Res, Rej) =>
     {
-        const FirstFile = Files.item(0);
-        if (FirstFile != null)
+        const Req = new Request("/py-include-path");
+        fetch(Req).then(Res => (Res.body as ReadableStream))
+        .then(RS =>
         {
-            const SplitRelPath = FirstFile.webkitRelativePath.split('/');
-            for (let PathPartIndex=0;
-                 PathPartIndex < SplitRelPath.length - 1;
-                 ++PathPartIndex)
+            const Reader = RS.getReader();
+            Reader.read().then(Stream =>
             {
-                RelPluginsDir += '/' + SplitRelPath[PathPartIndex];
-            }
-        }
-    }
-    else
+                const IncludePathAndEntriesJSONStr = new TextDecoder().decode(Stream.value);
+                Res(JSON.parse(IncludePathAndEntriesJSONStr));
+            });
+        });
+    });
+}
+
+async function GenJSONConfig(): Promise<string>
+{
+    return new Promise(async (Res, Rej) =>
     {
-        throw "Files are null";
-    }
-
-    let ExtrDefs: extr_def[] = [];
-    const ExtrDefsContainer = GetElementById("extr-defs-container");
-    for (const ExtrDefItem of ExtrDefsContainer.children)
-    {
-        const NameInput = ExtrDefItem.getElementsByClassName("extr-name-input")
-            .item(0) as HTMLInputElement | null;
-
-        const CountryInput = ExtrDefItem.getElementsByClassName("extr-country-input")
-            .item(0) as HTMLInputElement | null;
-
-        const LanguageInput = ExtrDefItem.getElementsByClassName("extr-language-input")
-            .item(0) as HTMLInputElement | null;
-
-        let CatDefs: cat_def[] = [];
-        for (const CatFieldsContainer of ExtrDefItem.getElementsByClassName("cat-fields-container"))
+        const PyIncludePath = (await GETIncludePathAndEntries()).PyIncludePath;
+        let ExtrDefs: extr_def[] = [];
+        const ExtrDefsContainer = GetElementByIDOrThrow("extr-defs-container");
+        for (const ExtrDefItem of ExtrDefsContainer.children)
         {
-            for (const CatItem of CatFieldsContainer.children)
+            const NameInput = ExtrDefItem.getElementsByClassName("extr-name-input")
+                .item(0) as HTMLInputElement | null;
+
+            const CountryInput = ExtrDefItem.getElementsByClassName("extr-country-input")
+                .item(0) as HTMLInputElement | null;
+
+            const LanguageInput = ExtrDefItem.getElementsByClassName("extr-language-input")
+                .item(0) as HTMLInputElement | null;
+
+            let CatDefs: cat_def[] = [];
+            for (const CatFieldsContainer of ExtrDefItem.getElementsByClassName("cat-fields-container"))
             {
-                const CatNameInput = CatItem.getElementsByClassName("cat-name-input")
-                    .item(0) as HTMLInputElement | null;
-
-                const MainPyModuleSelect = CatItem.getElementsByClassName("main-py-module-select")
-                    .item(0) as HTMLInputElement | null;
-
-                let Patterns: string[] = [];
-                const PatternsContainer = CatItem.getElementsByClassName("patterns-container")
-                    .item(0) as HTMLElement | null;
-                for (const PatternItem of (PatternsContainer as HTMLElement)
-                     .getElementsByClassName("pattern-input"))
+                for (const CatItem of CatFieldsContainer.children)
                 {
-                    Patterns.push((PatternItem as HTMLInputElement).value);
-                }
+                    const CatNameInput = CatItem.getElementsByClassName("cat-name-input")
+                        .item(0) as HTMLInputElement | null;
 
-                CatDefs.push({
-                    Name: (CatNameInput as HTMLInputElement).value,
-                    MainPyModule: (MainPyModuleSelect as HTMLInputElement).value,
-                    Patterns: Patterns,
-                });
+                    const MainPyModuleSelect = CatItem.getElementsByClassName("main-py-module-select")
+                        .item(0) as HTMLInputElement | null;
+
+                    let Patterns: string[] = [];
+                    const PatternsContainer = CatItem.getElementsByClassName("patterns-container")
+                        .item(0) as HTMLElement | null;
+                    for (const PatternItem of (PatternsContainer as HTMLElement)
+                         .getElementsByClassName("pattern-input"))
+                    {
+                        Patterns.push((PatternItem as HTMLInputElement).value);
+                    }
+
+                    CatDefs.push({
+                        Name: (CatNameInput as HTMLInputElement).value,
+                        MainPyModule: (MainPyModuleSelect as HTMLInputElement).value,
+                        Patterns: Patterns,
+                    });
+                }
             }
+
+            const NewExtrDef: extr_def = {
+                Name: (NameInput as HTMLInputElement).value,
+                Country: (CountryInput as HTMLInputElement).value,
+                Language: (LanguageInput as HTMLInputElement).value,
+                Categories: CatDefs,
+            };
+
+            ExtrDefs.push(NewExtrDef);
         }
 
-        const NewExtrDef: extr_def = {
-            Name: (NameInput as HTMLInputElement).value,
-            Country: (CountryInput as HTMLInputElement).value,
-            Language: (LanguageInput as HTMLInputElement).value,
-            Categories: CatDefs,
-        };
-
-        ExtrDefs.push(NewExtrDef);
-    }
-
-    let ConfigObj: gracie_config = {PyIncludePath: RelPluginsDir, ExtractorDefinitions: ExtrDefs};
-    console.log(JSON.stringify(ConfigObj));
-    return JSON.stringify(ConfigObj);
+        let ConfigObj: gracie_config = {PyIncludePath: PyIncludePath, ExtractorDefinitions: ExtrDefs};
+        console.log(JSON.stringify(ConfigObj));
+        Res(JSON.stringify(ConfigObj));
+    });
 }
 
 //
@@ -329,11 +291,47 @@ function Init(): void
         throw "Couldn't get acontainer element";
     }
 
+    const ABox = document.createElement("div");
+    ABox.style.width = "95vw";
+    ABox.style.height = "40vh";
+    ABox.style.maxWidth = "95vw";
+    ABox.style.maxHeight = "40vh";
+    ABox.style.margin = "10px";
+    ABox.style.display = "inline-block";
+    //ABox.style.border = "1px solid red";
+    ABox.style.overflow = "hidden";
+    AContainer.appendChild(ABox);
+
     // Document's text area
     const SampleText = "Prep Cooks/Cooks Starting at $25 an Hour Qualifications\n    Restaurant: 1 year (Required)\n    Work authorization (Required)\n    High school or equivalent (Preferred)\nBenefits\n\Pulled from the full job description\n\Employee discount\n\Paid time off\n\Full Job Description\nCooks\nGreat Opportunity to work at a new all-seasons resort in Northern Catskills - Wylder Windham Hotel.\nWe are looking for a dedicated, passionate, and skilled person to become a part of our pre-opening kitchen team for our Babbler's Restaurant. Our four-season resort will offer 110 hotel rooms, 1 restaurant, 1 Bakery with 20 acres of land alongside the Batavia Kill River, our family-friendly, all-season resort is filled with endless opportunities. This newly reimagined property offers banquet, wedding, and event facilities. We are looking for someone who is both willing to roll up their sleeves and work hard and has a desire to produce a first-class experience for our guests. Looking for applicants who are positive, upbeat, team-oriented, and a people person.\nWylder is an ever growing hotel brand with locations in Lake Tahoe, California and Tilghman Maryland.\nLots of room for upward growth within the company at the Wylder Windham property and Beyond.\nYoung at heart, active, ambitious individuals encouraged to apply!\nMust work weekends, nights, holidays and be flexible with schedule. Must be able to lift 50 pounds and work a physical Labor Job.\nWylder's culture & motto: \"Everyone does everything, no one is above doing anything and the words that's not my job don't exist here\". We are here to make the guest experience the best it can be. We all work as a team and help one another out from the front desk to the restaurant and housekeeping to maintenance. We are dog and family-friendly in all aspects!.\nWylder's culture & motto: \"Everyone does everything, no one is above doing anything and the words that's not my job don't exist here\". We are here to make the guest experience the best it can be. We all work as a team and help one another out from the front desk to the restaurant and housekeeping to maintenance. We are dog and family friendly in all aspects!\nCompetitive Pay- starting at $25-$26+ per hour based on experience\nJob Type: Full-time/Part-Time\nJob Type: Full-time\nPay: From $25-$26+ per hour based on experience\nBenefits:\n    Employee discount\n\    Paid time off\nSchedule:\n    10 hour shift\n\    8 hour shift\n\    Every weekend\n\    Holidays\n\    Monday to Friday\n\    Weekend availability\nEducation:\n    High school or equivalent (Preferred)\nExperience:\n    cooking: 1 year (Preferred)\nWork Location: One location\nJob Type: Full-time\nPay: $25.00 - $26.00 per hour\nBenefits:\n    Employee discount\n\    Paid time off\nPhysical setting:\n    Casual dining restaurant\nSchedule:\n    8 hour shift\n\    Day shift\n\    Holidays\n\    Monday to Friday\n\    Night shift\n\    Weekend availability\nEducation:\n    High school or equivalent (Preferred)\nExperience:\n    Restaurant: 1 year (Required)";
     const TA = document.createElement("textarea");
     TA.innerText = SampleText;
-    AContainer.appendChild(TA);
+    TA.style.border = "none";
+    TA.style.resize = "none";
+    TA.style.width = "100%";
+    TA.style.height = "100%";
+    TA.style.display = "none";
+    TA.addEventListener("blur", () =>
+    {
+        TA.style.display = "none";
+        const InnerText = TA.innerText;
+        SpanText.innerHTML = InnerText.slice(0, TA.selectionStart) + `<span class="noice">` +
+            InnerText.slice(TA.selectionStart, TA.selectionEnd) + "</span>" +
+            InnerText.slice(TA.selectionEnd);
+        SpanText.style.display = "inline-block";
+    });
+    ABox.appendChild(TA);
+
+    const SpanText = document.createElement("span");
+    SpanText.innerText = TA.innerText;
+    SpanText.onclick = () =>
+    {
+        // Toggle TA selection
+        SpanText.style.display = "none";
+        TA.style.display = "inline-block";
+        TA.focus();
+    }
+    ABox.appendChild(SpanText);
 
     // Import existing configuration input
     const ImportConfigLabel = document.createElement("label");
@@ -346,15 +344,6 @@ function Init(): void
     ImportConfigInput.type = "file";
     ImportConfigInput.onchange = ImportJSONConfig;
     AContainer.appendChild(ImportConfigInput);
-
-    // Plugins dir input
-    const PluginsDirInput = document.createElement("input") as HTMLInputElement;
-    PluginsDirInput.id = "plugins-dir-input";
-    PluginsDirInput.type = "file";
-    PluginsDirInput.setAttribute("webkitdirectory", "true");
-    PluginsDirInput.setAttribute("multiple", "true");
-    PluginsDirInput.onchange = UpdatePyModuleSelectOptions;
-    AContainer.appendChild(PluginsDirInput);
 
     const NewExtrDefFieldsContainer = document.createElement("div");
     NewExtrDefFieldsContainer.id = "new-extr-def-fields-container";
@@ -396,12 +385,13 @@ function Init(): void
 
     const GenConfButton = document.createElement("button");
     GenConfButton.innerText = "Generate config!";
-    GenConfButton.onclick = () => {
-        const JSONConfigStr = GenJSONConfig();
+    GenConfButton.onclick = async () => {
+        const JSONConfigStr = await GenJSONConfig();
         DEBUGDisplayConfig.innerText = JSONConfigStr;
     }
     AContainer.appendChild(GenConfButton);
     AContainer.appendChild(DEBUGDisplayConfig);
+
 }
 
 Init();

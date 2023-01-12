@@ -60,6 +60,15 @@ pub fn build(B: *std.build.Builder) void {
     Packager.linkLibC();
     Packager.install();
 
+    // Webserver
+    const Server = B.addExecutable("webserv", "src/webserv.zig");
+    Server.setOutputDir("./bin");
+    Server.setBuildMode(Mode);
+//    Packager.linkSystemLibrary("hs");
+//    Packager.addIncludePath("/usr/include/hs/");
+//    Packager.linkLibC();
+    Server.install();
+
     // C API Check exe
     const CAPICheck = B.addExecutable("capi_check", null);
     CAPICheck.setOutputDir("./bin");
