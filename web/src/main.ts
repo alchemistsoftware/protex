@@ -21,7 +21,6 @@ async function AddCat(ExtrDefItem: HTMLElement, Name: string, MainPyModule: stri
         CategoryNameInput.value = Name;
         CategoryFieldsItem.appendChild(CategoryNameInput);
 
-
         // Main python module selector
         const MainPyModuleSelect = document.createElement("select") as HTMLSelectElement;
         MainPyModuleSelect.className = "main-py-module-select";
@@ -35,7 +34,7 @@ async function AddCat(ExtrDefItem: HTMLElement, Name: string, MainPyModule: stri
         {
             // Set sot id and ask server for options.
             MainPyModuleSelect.id = "sot-main-py-module-select";
-            await PopulatePyModuleSelectOptions(MainPyModuleSelect);
+            await PopulatePyModuleSelectOptions(MainPyModuleSelect, MainPyModule);
         }
         else // Copy SOT selector options
         {
@@ -44,11 +43,17 @@ async function AddCat(ExtrDefItem: HTMLElement, Name: string, MainPyModule: stri
                  ++SelectIndex)
             {
                 const PyModuleNameOption = document.createElement("option");
+                MainPyModuleSelect.add(PyModuleNameOption);
+
                 PyModuleNameOption.text =
                     (SOTSelector.children[SelectIndex] as HTMLOptionElement).text;
                 PyModuleNameOption.value =
                     (SOTSelector.children[SelectIndex] as HTMLOptionElement).value;
-                MainPyModuleSelect.add(PyModuleNameOption);
+
+                // NOTE(cjb): Element needs to exist in DOM before you are allowed to screw with
+                // selectedindex.
+                if (PyModuleNameOption.text === MainPyModule)
+                    MainPyModuleSelect.selectedIndex = SelectIndex;
             }
         }
 
@@ -115,20 +120,27 @@ function AddExtr(ExtrName: string, Country: string, Language: string): HTMLEleme
     return ExtrDefItem;
 }
 
-async function PopulatePyModuleSelectOptions(Selector: HTMLSelectElement): Promise<void>
+async function PopulatePyModuleSelectOptions(Selector: HTMLSelectElement,
+    SelectText: string): Promise<void>
 {
     return new Promise(async (Res) =>
     {
         Selector.innerText = "";
 
         const PyEntries = (await GETIncludePathAndEntries()).Entries;
-        for (const PyModule of PyEntries)
+        let SelectIndex = -1;
+        PyEntries.forEach((PyModule, PyModuleIndex) =>
         {
             const PyModuleNameOption = document.createElement("option");
             PyModuleNameOption.value = PyModule;
             PyModuleNameOption.text = PyModule;
+            if (PyModule === SelectText)
+            {
+                SelectIndex = PyModuleIndex;
+            }
             Selector.add(PyModuleNameOption);
-        }
+        });
+        Selector.selectedIndex = SelectIndex;
         Res();
     });
 }
@@ -164,32 +176,33 @@ function GetElementByIDOrThrow(ElemId: string): HTMLElement
     return Elem;
 }
 
-function ImportJSONConfig(E: Event): void
+async function ImportJSONConfig(E: Event): Promise<void>
 {
-    if ((E.target == null) ||
-        ((E.target as HTMLElement).id != "import-config-input"))
+    return new Promise(async (Res, Rej) =>
     {
-        throw "Bad event target";
-    }
-
-    // Get first file ( should  only be one anyway )
-    const Files = ((E.target as HTMLInputElement).files as FileList);
-    if (Files.length == 0)
-    {
-        return;
-    }
-    Files[0].text().then(Text =>
-    {
-        const JSONConfig = JSON.parse(Text);
-        // TODO(cjb): Set pyincludepath
-        for (const ExtrDef of JSONConfig.ExtractorDefinitions)
+        if ((E.target == null) ||
+            ((E.target as HTMLElement).id != "import-config-input"))
         {
-            const ExtrDefElem = AddExtr(ExtrDef.Name, ExtrDef.Country, ExtrDef.Language);
-            for (const Cat of ExtrDef.Categories)
-            {
-                AddCat(ExtrDefElem, Cat.Name, Cat.MainPyModule, Cat.Patterns);
-            }
+            throw "Bad event target";
         }
+
+        // Get first file ( should  only be one anyway )
+        const Files = ((E.target as HTMLInputElement).files as FileList);
+        if (Files.length == 0)
+        {
+            return;
+        }
+        Files[0].text().then(async Text =>
+        {
+            const JSONConfig = JSON.parse(Text);
+            for (const ExtrDef of JSONConfig.ExtractorDefinitions)
+            {
+                const ExtrDefElem = AddExtr(ExtrDef.Name, ExtrDef.Country, ExtrDef.Language);
+                for (const Cat of ExtrDef.Categories)
+                    await AddCat(ExtrDefElem, Cat.Name, Cat.MainPyModule, Cat.Patterns);
+            }
+        });
+        Res();
     });
 }
 
@@ -342,7 +355,10 @@ function Init(): void
     const ImportConfigInput = document.createElement("input");
     ImportConfigInput.id = "import-config-input";
     ImportConfigInput.type = "file";
-    ImportConfigInput.onchange = ImportJSONConfig;
+    ImportConfigInput.onchange = async (E) =>
+    {
+        await ImportJSONConfig(E);
+    }
     AContainer.appendChild(ImportConfigInput);
 
     const NewExtrDefFieldsContainer = document.createElement("div");
