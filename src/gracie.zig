@@ -180,6 +180,8 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[* :0]const u8) !self
 //
 // Read extractor definitions
 //
+    // TODO(cjb): set allocator used for scratch
+    Self.Scratch = null; // HS is weird about scratch being null
     Self.ExtrDefs = try Self.Ally.alloc(extractor_def, ArtiHeader.nExtractorDefs);
 
     var ExtractorDefIndex: usize = 0;
@@ -214,8 +216,6 @@ pub fn Init(Ally: allocator, ArtifactPathZ: ?[* :0]const u8) !self
         try HSCodeToErr(c.hs_deserialize_database_at(SerializedBytes.ptr, DefHeader.DatabaseSize,
             ExtrDef.Database));
 
-        // TODO(cjb): set allocator used for scratch
-        Self.Scratch = null;
         try HSCodeToErr(c.hs_alloc_scratch(ExtrDef.Database, &Self.Scratch));
 
 //
@@ -266,17 +266,10 @@ fn EventHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
 {
     const MatchList = @ptrCast(?*array_list(match),
         @alignCast(@alignOf(?*array_list(match)), Ctx)) orelse unreachable;
-    if (MatchList.items.len + 1 > MatchList.capacity)
-    {
-        // TODO(cjb): Decide if this should be handled or not.
-        MatchList.append(.{.SO=From, .EO=To, .ID=ID}) catch unreachable;
-        return 0;
-    }
-    else
-    {
-        unreachable; //TODO(cjb): Grow matchlist...
-    }
-    return 1;
+
+    // TODO(cjb): Decide if this should be handled or not. (just make this fixed size)
+    MatchList.append(.{.SO=From, .EO=To, .ID=ID}) catch unreachable;
+    return 0;
 }
 
 export fn GracieExtract(Ctx: ?*?*anyopaque, Text: ?[*]const u8,
@@ -314,38 +307,56 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
         MatchList.clearRetainingCapacity();
         Parser.reset();
 
+        try W.objectField(Def.Name);
+        try W.beginArray();
+
         // Hyperscannnnn!!
         try HSCodeToErr(c.hs_scan(Def.Database, Text.ptr, @intCast(c_uint, Text.len), 0, Self.Scratch,
                 EventHandler, &MatchList));
         for (MatchList.items) |M|
         {
-            var MainModuleIndex: usize = undefined;
+            try W.arrayElem();
+            try W.beginObject();
+
+            //TODO(cjb): What happens when you get more than one match per category?
+            var CatIndex: usize = 0;
             for (Def.CatBoxes) |Cat|
             {
                 if ((M.ID >= Cat.StartPatternID) and
                     (M.ID < Cat.EndPatternID))
                 {
-                    MainModuleIndex = Cat.MainPyModuleIndex;
+                    break;
                 }
+                CatIndex += 1;
             }
+            const MainModuleIndex = Def.CatBoxes[CatIndex].MainPyModuleIndex;
+            const CatName = Def.CatBoxes[CatIndex].Name;
+
             // TODO(cjb): Have sempy alloc a buffer for you.
             nBytesCopied = try sempy.Run(Self.PyCallbacks.items[MainModuleIndex],
                 Text[M.SO .. M.EO], SempyRunBuf);
-            break;
-        }
-        try W.objectField(Def.Name);
 
-        // Verify writing a valid json string
-        if (std.json.validate(@ptrCast([*]const u8, SempyRunBuf.ptr)[0 .. nBytesCopied]))
-        {
-            const ParseTree = try Parser.parse(SempyRunBuf[0..nBytesCopied]);
-            const RootJsonObj = ParseTree.root;
-            try W.emitJson(RootJsonObj);
+            try W.objectField(CatName);
+            try W.emitString(SempyRunBuf[0..nBytesCopied]);
+            try W.objectField("SO");
+            try W.emitNumber(M.SO);
+            try W.objectField("EO");
+            try W.emitNumber(M.EO);
+            try W.endObject();
+
+            // Verify writing a valid json string
+            //if (std.json.validate(@ptrCast([*]const u8, SempyRunBuf.ptr)[0 .. nBytesCopied]))
+            //{
+            //    const ParseTree = try Parser.parse(SempyRunBuf[0..nBytesCopied]);
+            //    const RootJsonObj = ParseTree.root;
+            //    try W.emitJson(RootJsonObj);
+            //}
+            //else
+            //{
+            //    try W.emitString("Bad json");
+            //}
         }
-        else
-        {
-            try W.emitString("Bad json");
-        }
+        try W.endArray();
     }
     try W.endObject();
 
