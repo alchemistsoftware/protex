@@ -1,9 +1,9 @@
-function AddEmptyCat(ExtrDefItem: HTMLElement): void
+function AddEmptyCat(S: gracie_state, ExtrDefItem: HTMLElement): void
 {
-    AddCat(ExtrDefItem, "", "", []);
+    AddCat(S, ExtrDefItem, "", "", []);
 }
 
-async function AddCat(ExtrDefItem: HTMLElement, Name: string, MainPyModule: string,
+async function AddCat(S: gracie_state, ExtrDefItem: HTMLElement, Name: string, MainPyModule: string,
     Patterns: string[]): Promise<void>
 {
     return new Promise(async (Res) =>
@@ -64,23 +64,51 @@ async function AddCat(ExtrDefItem: HTMLElement, Name: string, MainPyModule: stri
 
         const AddPatternButton = document.createElement("button");
         AddPatternButton.innerText = "New pattern";
-        AddPatternButton.onclick = () => AddPattern(PatternsContainer, "");
+        AddPatternButton.onclick = () => AddPattern(S, PatternsContainer, "");
         PatternsContainer.appendChild(AddPatternButton);
 
-        for (const P of Patterns) AddPattern(PatternsContainer, P);
+        for (const P of Patterns) AddPattern(S, PatternsContainer, P);
         Res();
     });
 }
 
-function AddPattern(PatternsContainer: HTMLElement, Pattern: string): void
+interface gracie_state
+{
+    SPI: HTMLInputElement | null, // Selected pattern input
+};
+
+// On pattern selection set it as the "last selected pattern"
+function MakeSelectedPattern(S: gracie_state, PatternInput: HTMLInputElement): void
+{
+    if (S.SPI != null)
+        S.SPI.style.setProperty("border", "1px solid white");
+    PatternInput.style.setProperty("border", "1px solid yellow");
+    S.SPI = PatternInput;
+}
+
+function AddPattern(S: gracie_state, PatternsContainer: HTMLElement, Pattern: string): void
 {
     const PatternInput = document.createElement("input");
     PatternInput.className = "pattern-input";
     PatternInput.value = Pattern;
+    PatternInput.addEventListener("focus", () => MakeSelectedPattern(S, PatternInput));
     PatternsContainer.appendChild(PatternInput);
+
+    const RemovePatternButton = document.createElement("button");
+    RemovePatternButton.innerText = "Remove";
+    RemovePatternButton.onclick = () =>
+    {
+        if (PatternInput === S.SPI)
+        {
+            S.SPI = null;
+        }
+        PatternInput.remove();
+        RemovePatternButton.remove();
+    }
+    PatternsContainer.appendChild(RemovePatternButton);
 }
 
-function AddExtr(ExtrName: string, Country: string, Language: string): HTMLElement
+function AddExtr(S: gracie_state, ExtrName: string, Country: string, Language: string): HTMLElement
 {
     const ExtrDefsContainer = document.getElementById("extr-defs-container");
     if (ExtrDefsContainer == null)
@@ -114,7 +142,7 @@ function AddExtr(ExtrName: string, Country: string, Language: string): HTMLEleme
     // Attach an add category button.
     const AddCategoryButton = document.createElement("button");
     AddCategoryButton.innerText = "New category";
-    AddCategoryButton.onclick = () => AddEmptyCat(ExtrDefItem);
+    AddCategoryButton.onclick = () => AddEmptyCat(S, ExtrDefItem);
     ExtrDefItem.appendChild(AddCategoryButton);
 
     return ExtrDefItem;
@@ -176,7 +204,7 @@ function GetElementByIDOrThrow(ElemId: string): HTMLElement
     return Elem;
 }
 
-async function ImportJSONConfig(E: Event): Promise<void>
+async function ImportJSONConfig(S: gracie_state, E: Event): Promise<void>
 {
     return new Promise(async (Res, Rej) =>
     {
@@ -185,6 +213,10 @@ async function ImportJSONConfig(E: Event): Promise<void>
         {
             throw "Bad event target";
         }
+
+        // Clear out current definitions if any.
+        const ExtrDefsContainer = GetElementByIDOrThrow("extr-defs-container");
+        ExtrDefsContainer.innerHTML = "";
 
         // Get first file ( should  only be one anyway )
         const Files = ((E.target as HTMLInputElement).files as FileList);
@@ -197,9 +229,9 @@ async function ImportJSONConfig(E: Event): Promise<void>
             const JSONConfig = JSON.parse(Text);
             for (const ExtrDef of JSONConfig.ExtractorDefinitions)
             {
-                const ExtrDefElem = AddExtr(ExtrDef.Name, ExtrDef.Country, ExtrDef.Language);
+                const ExtrDefElem = AddExtr(S, ExtrDef.Name, ExtrDef.Country, ExtrDef.Language);
                 for (const Cat of ExtrDef.Categories)
-                    await AddCat(ExtrDefElem, Cat.Name, Cat.MainPyModule, Cat.Patterns);
+                    await AddCat(S, ExtrDefElem, Cat.Name, Cat.MainPyModule, Cat.Patterns);
             }
         });
         Res();
@@ -292,11 +324,24 @@ async function GenJSONConfig(): Promise<string>
     });
 }
 
-//
-// Sets up the initial DOM structure
-//
+function Regexify(Str: string): string
+{
+    return Str.toLowerCase()
+        // Escape regex itself.
+        // NOTE(cjb): $& = whole matched stringh
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        // Replace digits
+        .replace(/[\d]/g, "\\d");
+}
+
+///
+/// Sets up the initial DOM structure, and state.
+///
 function Init(): void
 {
+    // Declare app state
+    let S = {} as gracie_state;
+
     // Root container to add dom elements to.
     const AContainer = document.getElementById("acontainer")
     if (AContainer == null)
@@ -332,6 +377,11 @@ function Init(): void
             InnerText.slice(TA.selectionStart, TA.selectionEnd) + "</span>" +
             InnerText.slice(TA.selectionEnd);
         SpanText.style.display = "inline-block";
+
+        if (S.SPI != null)
+        {
+            S.SPI.value = Regexify(InnerText.slice(TA.selectionStart, TA.selectionEnd));
+        }
     });
     ABox.appendChild(TA);
 
@@ -357,7 +407,7 @@ function Init(): void
     ImportConfigInput.type = "file";
     ImportConfigInput.onchange = async (E) =>
     {
-        await ImportJSONConfig(E);
+        await ImportJSONConfig(S, E);
     }
     AContainer.appendChild(ImportConfigInput);
 
@@ -383,7 +433,7 @@ function Init(): void
     AddExtrButton.innerText = "New extractor";
     AddExtrButton.onclick = () =>
 	{
-		AddExtr(ExtrNameInput.value, ExtrCountryInput.value, ExtrLanguageInput.value);
+		AddExtr(S, ExtrNameInput.value, ExtrCountryInput.value, ExtrLanguageInput.value);
 
         // Reset inputs
         ExtrNameInput.value = "";
@@ -407,7 +457,6 @@ function Init(): void
     }
     AContainer.appendChild(GenConfButton);
     AContainer.appendChild(DEBUGDisplayConfig);
-
 }
 
 Init();

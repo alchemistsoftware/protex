@@ -308,13 +308,16 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
         Parser.reset();
 
         try W.objectField(Def.Name);
-        try W.beginObject();
+        try W.beginArray();
 
         // Hyperscannnnn!!
         try HSCodeToErr(c.hs_scan(Def.Database, Text.ptr, @intCast(c_uint, Text.len), 0, Self.Scratch,
                 EventHandler, &MatchList));
         for (MatchList.items) |M|
         {
+            try W.arrayElem();
+            try W.beginObject();
+
             //TODO(cjb): What happens when you get more than one match per category?
             var CatIndex: usize = 0;
             for (Def.CatBoxes) |Cat|
@@ -335,6 +338,11 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
 
             try W.objectField(CatName);
             try W.emitString(SempyRunBuf[0..nBytesCopied]);
+            try W.objectField("SO");
+            try W.emitNumber(M.SO);
+            try W.objectField("EO");
+            try W.emitNumber(M.EO);
+            try W.endObject();
 
             // Verify writing a valid json string
             //if (std.json.validate(@ptrCast([*]const u8, SempyRunBuf.ptr)[0 .. nBytesCopied]))
@@ -348,7 +356,7 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
             //    try W.emitString("Bad json");
             //}
         }
-        try W.endObject();
+        try W.endArray();
     }
     try W.endObject();
 
