@@ -319,19 +319,29 @@ async function GenJSONConfig(): Promise<string>
         }
 
         let ConfigObj: gracie_config = {PyIncludePath: PyIncludePath, ExtractorDefinitions: ExtrDefs};
-        console.log(JSON.stringify(ConfigObj));
         Res(JSON.stringify(ConfigObj));
     });
 }
 
+function EscapeRegex(Regex: string): string
+{
+    // NOTE(cjb): $& = whole matched string
+    return Regex.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function RegexCaptureAnyNum(Regex: string): string
+{
+    return Regex.replace(/[\d]/g, "\\d");
+}
+
 function Regexify(Str: string): string
 {
-    return Str.toLowerCase()
-        // Escape regex itself.
-        // NOTE(cjb): $& = whole matched stringh
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-        // Replace digits
-        .replace(/[\d]/g, "\\d");
+    return RegexCaptureAnyNum(EscapeRegex(Str.toLowerCase()));
+}
+
+function RegexifyLiteral(Str: string): string
+{
+    return EscapeRegex(Str.toLowerCase());
 }
 
 ///
