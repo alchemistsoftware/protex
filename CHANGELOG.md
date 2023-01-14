@@ -2,6 +2,10 @@
 
 This project adheres to [semver](https://semver.org/)
 
+## [0.1.1-alpha] - unreleased
+### Added
+- .gitignore
+
 ## [0.1.0-alpha] - 01-12-23
 ### Added
 - Web client and server
