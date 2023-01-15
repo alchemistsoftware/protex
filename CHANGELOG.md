@@ -9,6 +9,8 @@ This project adheres to [semver](https://semver.org/)
 
 ### Changed
 - Refactoring of python module selector population.
+- When selecting text the pattern input which was last selected (if any) is filled with the user's
+    text selection converted to a basic regex pattern.
 
 ### Removed
 - Needless async functions
