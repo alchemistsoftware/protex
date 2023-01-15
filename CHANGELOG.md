@@ -5,6 +5,13 @@ This project adheres to [semver](https://semver.org/)
 ## [0.1.1-alpha] - unreleased
 ### Added
 - .gitignore
+- Regex hilighting for selected patterns
+
+### Changed
+- Refactoring of python module selector population.
+
+### Removed
+- Needless async functions
 
 ## [0.1.0-alpha] - 01-12-23
 ### Added
