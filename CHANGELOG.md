@@ -5,7 +5,7 @@ This project adheres to [semver](https://semver.org/)
 ## [0.1.1-alpha] - unreleased
 ### Added
 - .gitignore
-- Regex hilighting for selected patterns
+- Regex highlighting for selected patterns
 
 ### Changed
 - Refactoring of python module selector population.
