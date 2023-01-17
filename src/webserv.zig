@@ -11,80 +11,94 @@ const io = std.io;
 
 const BUFSIZ = 8196;
 
-const ServeFileError = error {
+const handle_requset_error = error {
     RecvHeaderEOF,
     RecvHeaderExceededBuffer,
     HeaderDidNotMatch,
 };
 
-fn ServeFile(Stream: *const net.Stream, dir: fs.Dir) !void
+fn IsValidRequestMethod(Method: []const u8) bool
 {
-    var RecvBuf: [BUFSIZ]u8 = undefined;
-    var RecvTotal: usize = 0;
+    return (mem.eql(u8, Method, "GET") or mem.eql(u8, Method, "PUT"));
+}
 
-    while (Stream.read(RecvBuf[RecvTotal..])) |RecvLen| {
-        if (RecvLen == 0)
-            return ServeFileError.RecvHeaderEOF;
+const http_response_header = struct
+{
+    const BasicResponse =
+        "HTTP/1.1 {} OK\r\n" ++
+        "Connection: close\r\n";
 
-        RecvTotal += RecvLen;
+    const ContentTypeAndLength =
+        "Content-Type: {s}\r\n" ++
+        "Content-Length: {}\r\n";
 
-        if (mem.containsAtLeast(u8, RecvBuf[0..RecvTotal], 1, "\r\n\r\n"))
-            break;
+    var HeaderBuf: [1024]u8 = undefined;
 
-        if (RecvTotal >= RecvBuf.len)
-            return ServeFileError.RecvHeaderExceededBuffer;
-    } else |read_err| {
-        return read_err;
+    Status: u16,
+    Mime: []const u8,
+    ContentLength: usize,
+
+    pub fn StringifyWithContent(Self: http_response_header) ![]const u8
+    {
+        return try std.fmt.bufPrint(&HeaderBuf, BasicResponse ++ ContentTypeAndLength ++ "\r\n",
+            .{Self.Status, Self.Mime, Self.ContentLength});
     }
 
-    const recv_slice = RecvBuf[0..RecvTotal];
-    std.log.info(" <<<\n{s}", .{recv_slice});
-
-    var FilePath: []const u8 = undefined;
-    var tok_itr = mem.tokenize(u8, recv_slice, " ");
-
-    if (!mem.eql(u8, tok_itr.next() orelse "", "GET"))
-        return ServeFileError.HeaderDidNotMatch;
-
-    const path = tok_itr.next() orelse "";
-    if (path[0] != '/')
-        return ServeFileError.HeaderDidNotMatch;
-
-    if (mem.eql(u8, path, "/"))
-        FilePath = "index"
-    else
-        FilePath = path[1..];
-
-    if (!mem.startsWith(u8, tok_itr.rest(), "HTTP/1.1\r\n"))
-        return ServeFileError.HeaderDidNotMatch;
-
-    var FileExt = fs.path.extension(FilePath);
-    var path_buf: [fs.MAX_PATH_BYTES]u8 = undefined;
-
-    const GETs = .{
-        .PyIncludePath = "py-include-path",
-    };
-    const HTTPHead =
-        "HTTP/1.1 200 OK\r\n" ++
-        "Connection: close\r\n" ++
-        "Content-Type: {s}\r\n" ++
-        "Content-Length: {}\r\n" ++
-        "\r\n";
-    const Mimes = .{
-        .{".html", "text/html"},
-        .{".js", "text/javascript"},
-        .{".css", "text/css"},
-        .{".map", "application/json"},
-        .{".svg", "image/svg+xml"},
-        .{".jpg", "image/jpg"},
-        .{".png", "image/png"}
-    };
-
-    // GET request
-    if (mem.eql(u8, FilePath, GETs.PyIncludePath))
+    pub fn StringifyBasic(Self: http_response_header) ![]const u8
     {
-        const Mime: []const u8 = "application/json";
+        return try std.fmt.bufPrint(&HeaderBuf, BasicResponse ++ "\r\n", .{Self.Status});
+    }
+};
 
+fn HandleRequest(Stream: *const net.Stream, dir: fs.Dir) !void
+{
+    const GETs = .{
+        .PyIncludePath = "get-py-include-path",
+    };
+    const PUTs = .{
+        .Config = "put-config",
+    };
+
+    var RecvBuf: [BUFSIZ]u8 = undefined;
+    var RecvTotal: usize = 0;
+    while (Stream.read(RecvBuf[RecvTotal..])) |RecvLen|
+    {
+        if (RecvLen == 0)
+            return handle_requset_error.RecvHeaderEOF;
+        RecvTotal += RecvLen;
+        if (mem.containsAtLeast(u8, RecvBuf[0..RecvTotal], 1, "\r\n\r\n"))
+            break;
+        if (RecvTotal >= RecvBuf.len)
+            return handle_requset_error.RecvHeaderExceededBuffer;
+    }
+    else |read_err|
+        return read_err;
+
+    const RecvSlice = RecvBuf[0..RecvTotal];
+    std.log.info(" <<<\n{s}", .{RecvSlice});
+
+    var ResourcePath: []const u8 = undefined;
+    var TokItr = mem.tokenize(u8, RecvSlice, " ");
+
+    const Method = TokItr.next() orelse "";
+    if (!IsValidRequestMethod(Method))
+        return handle_requset_error.HeaderDidNotMatch;
+
+    // Parse resource path
+    const Path = TokItr.next() orelse "";
+    if (Path[0] != '/')
+        return handle_requset_error.HeaderDidNotMatch;
+
+    if (mem.eql(u8, Path, "/"))
+        ResourcePath = "index"
+    else
+        ResourcePath = Path[1..];
+
+    if (!mem.startsWith(u8, TokItr.rest(), "HTTP/1.1\r\n"))
+        return handle_requset_error.HeaderDidNotMatch;
+
+    if (mem.eql(u8, ResourcePath, GETs.PyIncludePath))
+    {
         var ResBackBuf: [1024]u8 = undefined;
         var ResFBS = io.fixedBufferStream(&ResBackBuf);
         var W = std.json.writeStream(ResFBS.writer(), 4);
@@ -106,23 +120,45 @@ fn ServeFile(Stream: *const net.Stream, dir: fs.Dir) !void
         try W.endArray();
         try W.endObject();
 
-        std.log.info(" >>>\n" ++ HTTPHead, .{Mime, ResFBS.getWritten().len});
-        try Stream.writer().print(HTTPHead, .{Mime, ResFBS.getWritten().len});
+        var ResponseHeader = http_response_header{.Status=200, .Mime="application/json",
+            .ContentLength = ResFBS.getWritten().len};
+        const ResponseHeaderStr = try ResponseHeader.StringifyWithContent();
+        std.log.info(" >>>\n{s}", .{ResponseHeaderStr});
+        try Stream.writer().writeAll(ResponseHeaderStr);
         try Stream.writer().writeAll(ResFBS.getWritten());
+    }
+    else if (mem.eql(u8, ResourcePath, PUTs.Config))
+    {
+        var ResponseHeader = http_response_header{.Status=200, .Mime="basic", .ContentLength=0};
+        const ResponseHeaderStr = try ResponseHeader.StringifyBasic();
+        std.log.info(" >>>\n{s}", .{ResponseHeaderStr});
+        try Stream.writer().writeAll(ResponseHeaderStr);
     }
     else // Orelse handle serving up a file.
     {
-        if (FileExt.len == 0) {
-            var path_fbs = io.fixedBufferStream(&path_buf);
+        const Mimes = .{
+            .{".html", "text/html"},
+            .{".js", "text/javascript"},
+            .{".css", "text/css"},
+            .{".map", "application/json"},
+            .{".svg", "image/svg+xml"},
+            .{".jpg", "image/jpg"},
+            .{".png", "image/png"}
+        };
 
-            try path_fbs.writer().print("{s}.html", .{FilePath});
+        var PathBuf: [fs.MAX_PATH_BYTES]u8 = undefined;
+        var FileExt = fs.path.extension(ResourcePath);
+        if (FileExt.len == 0) {
+            var path_fbs = io.fixedBufferStream(&PathBuf);
+
+            try path_fbs.writer().print("{s}.html", .{ResourcePath});
             FileExt = ".html";
-            FilePath = path_fbs.getWritten();
+            ResourcePath = path_fbs.getWritten();
         }
 
-        std.log.info("Opening {s}", .{FilePath});
+        std.log.info("Opening {s}", .{ResourcePath});
 
-        var body_file = dir.openFile(FilePath, .{}) catch |err| {
+        var body_file = dir.openFile(ResourcePath, .{}) catch |err| {
             const http_404 = "HTTP/1.1 404 Not Found\r\n\r\n404";
             std.log.info(" >>>\n" ++ http_404, .{});
             try Stream.writer().print(http_404, .{});
@@ -130,16 +166,21 @@ fn ServeFile(Stream: *const net.Stream, dir: fs.Dir) !void
         };
         defer body_file.close();
 
-        const file_len = try body_file.getEndPos();
+        const FileLen = try body_file.getEndPos();
 
+        // Try to determine mime type from file extension
         var Mime: []const u8 = "text/plain";
-        inline for (Mimes) |KV| {
+        inline for (Mimes) |KV|
+        {
             if (mem.eql(u8, FileExt, KV[0]))
                 Mime = KV[1];
         }
 
-        std.log.info(" >>>\n" ++ HTTPHead, .{Mime, file_len});
-        try Stream.writer().print(HTTPHead, .{Mime, file_len});
+        const ResponseHeader = http_response_header{.Status=200, .Mime=Mime,
+            .ContentLength = FileLen};
+        const ResponseHeaderStr = try ResponseHeader.StringifyWithContent();
+        std.log.info(" >>>\n{s}", .{ResponseHeaderStr});
+        try Stream.writer().writeAll(ResponseHeaderStr);
 
         const zero_iovec = &[0]std.os.iovec_const{};
         var send_total: usize = 0;
@@ -149,7 +190,7 @@ fn ServeFile(Stream: *const net.Stream, dir: fs.Dir) !void
                 Stream.handle,
                 body_file.handle,
                 send_total,
-                file_len,
+                FileLen,
                 zero_iovec,
                 zero_iovec,
                 0
@@ -163,19 +204,22 @@ fn ServeFile(Stream: *const net.Stream, dir: fs.Dir) !void
     }
 }
 
+fn PrintUsage(ExeName: []const u8) void
+{
+    std.log.err("Usage: {s} <dir to serve files from> <dir to write data to>", .{ExeName});
+}
+
 pub fn main() !void
 {
     var Args = std.process.args();
-    const ExeName = Args.next() orelse "self-serve";
-    const PublicPath = Args.next() orelse
-    {
-        std.log.err("Usage: {s} <dir to serve files from>", .{ExeName});
-        return;
-    };
+    const ExeName = Args.next() orelse "serverexe";
+    const PublicPath = Args.next() orelse { PrintUsage(ExeName); return; };
+    const DataPath = Args.next() orelse { PrintUsage(ExeName); return; };
+    _ = DataPath;
 
     var Dir = try fs.cwd().openDir(PublicPath, .{});
     const SelfAddr = try net.Address.resolveIp("127.0.0.1", 1024);
-    var Listener = net.StreamServer.init(.{});
+    var Listener = net.StreamServer.init(.{.reuse_address=true});
     try (&Listener).listen(SelfAddr);
 
     std.log.info("Listening on {}; press Ctrl-C to exit...", .{SelfAddr});
@@ -183,8 +227,7 @@ pub fn main() !void
     while ((&Listener).accept()) |Conn|
     {
         std.log.info("Accepted Connection from: {}", .{Conn.address});
-
-        ServeFile(&Conn.stream, Dir) catch |Err|
+        HandleRequest(&Conn.stream, Dir) catch |Err|
         {
             if (@errorReturnTrace()) |Bt| {
                 std.log.err("Failed to serve client: {}: {}", .{Err, Bt});
