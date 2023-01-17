@@ -272,18 +272,33 @@ async function GETIncludePathAndEntries(): Promise<py_include_path_and_entries>
 {
     return new Promise((Res, Rej) =>
     {
-        const Req = new Request("/py-include-path");
-        fetch(Req).then(Res => (Res.body as ReadableStream))
-        .then(RS =>
-        {
-            const Reader = RS.getReader();
-            Reader.read().then(Stream =>
+        const Req = new Request("/get-py-include-path");
+        fetch(Req)
+            .then(Res => (Res.body as ReadableStream))
+            .then(RS =>
             {
-                const IncludePathAndEntriesJSONStr = new TextDecoder().decode(Stream.value);
-                Res(JSON.parse(IncludePathAndEntriesJSONStr));
+                const Reader = RS.getReader();
+                Reader.read().then(Stream =>
+                {
+                    const IncludePathAndEntriesJSONStr = new TextDecoder()
+                        .decode(Stream.value);
+                    Res(JSON.parse(IncludePathAndEntriesJSONStr));
+                });
             });
-        });
     });
+}
+
+function PUTConfig(ConfStr: string): void
+{
+    const Enc = new TextEncoder();
+    const View = Enc.encode(ConfStr);
+    const Req = new Request("/put-config", {method: "PUT", body: View});
+    fetch(Req)
+        .then(Res =>
+        {
+            if (Res.status !== 200)
+                throw new Error("Server didn't return 200");
+        });
 }
 
 function GenJSONConfig(S: gracie_state): string
@@ -367,6 +382,11 @@ function RegexifyLiteral(Str: string): string
 ///
 function Init(): void
 {
+    // Set a fun title
+    const PossibleTitles = ["now with sauce", "be the pattern", "gas, gas, gas",
+                            "wow those are some nice matches", "nice regex bruh", "plugin this py!"];
+    document.title = PossibleTitles[Math.round(Math.random() * 100) % PossibleTitles.length];
+
     let S = {} as gracie_state;
     const IncludePathAndEntries = GETIncludePathAndEntries()
         .then((IncludePathAndEntries) =>
@@ -491,6 +511,11 @@ function Init(): void
 
     const RunExtractor = document.createElement("button");
     RunExtractor.innerText = "Run extractor";
+    RunExtractor.onclick = () =>
+    {
+        const JSONConfigStr = GenJSONConfig(S);
+        PUTConfig(JSONConfigStr);
+    }
     AContainer.appendChild(RunExtractor);
 
     const GenConfButton = document.createElement("button");
