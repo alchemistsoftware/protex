@@ -6,39 +6,27 @@ const c = @cImport({
 
 const array_list = std.ArrayList;
 
-fn CountFilesInDirWithExtension(IDir: std.fs.IterableDir, Extension: []const u8) !usize
-{
-    var Result: usize = 0;
-    var Iterator = IDir.iterate();
-    var Entry = try Iterator.next();
-    while (Entry != null) : (Entry = try Iterator.next())
-    {
-        if (std.mem.eql(u8, std.fs.path.extension(Entry.?.name), Extension))
-        {
-            Result += 1;
-        }
-    }
-    return Result;
-}
-
 pub fn main() !void
 {
-    // Use page allocator for most allocations
     var Ally = std.heap.page_allocator;
-
-    // Parse command line args
     var ArgIter = try std.process.argsWithAllocator(Ally);
     defer ArgIter.deinit();
     if (!ArgIter.skip())
     {
         unreachable;
     }
+    const ConfPathZ = ArgIter.next() orelse unreachable;
+    const ArtiPathZ = ArgIter.next() orelse unreachable;
 
+    try CreateArtifact(Ally, ConfPathZ, ArtiPathZ);
+}
+
+pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: [:0]const u8,
+    ArtiPathZ: [:0]const u8) !void
+{
 //
 // Compute absolute path to config's parent dir
 //
-    const ConfPathZ = ArgIter.next() orelse unreachable;
-
     // Try normalize arg absolute path
     var AbsConfPathBuf: [std.os.PATH_MAX]u8 = undefined;
     const AbsConfigPath = try std.fs.realpath(ConfPathZ, &AbsConfPathBuf);
@@ -60,7 +48,6 @@ pub fn main() !void
 // Create artifact file and write initial header.
 //
     // Create artifact file at path provided as second command line arg
-    const ArtiPathZ = ArgIter.next() orelse unreachable;
     const ArtiF = try std.fs.cwd().createFile(ArtiPathZ, .{});
 
     //TODO(cjb): Be path agnostic here i.e. normalize to abs path but ignore if absoulute
@@ -254,4 +241,19 @@ pub fn main() !void
                     &@intCast(usize, MainModuleIndex))[0 .. @sizeOf(usize)]);
         }
     }
+}
+
+fn CountFilesInDirWithExtension(IDir: std.fs.IterableDir, Extension: []const u8) !usize
+{
+    var Result: usize = 0;
+    var Iterator = IDir.iterate();
+    var Entry = try Iterator.next();
+    while (Entry != null) : (Entry = try Iterator.next())
+    {
+        if (std.mem.eql(u8, std.fs.path.extension(Entry.?.name), Extension))
+        {
+            Result += 1;
+        }
+    }
+    return Result;
 }
