@@ -6,8 +6,10 @@ This project adheres to [semver](https://semver.org/)
 ### Added
 - .gitignore
 - Regex highlighting for selected patterns
+- Server writes configurations built in the web interface to disk.
 
 ### Changed
+- Packager exposes artifact creation functionality.
 - Refactoring of python module selector population.
 - When selecting text the pattern input which was last selected (if any) is filled with the user's
     text selection converted to a basic regex pattern.
