@@ -4,6 +4,8 @@
 //
 
 const std = @import("std");
+const packager = @import("./packager.zig");
+
 const net = std.net;
 const mem = std.mem;
 const fs = std.fs;
@@ -11,10 +13,12 @@ const io = std.io;
 
 const BUFSIZ = 8196;
 
-const handle_requset_error = error {
+const handle_request_error = error {
     RecvHeaderEOF,
     RecvHeaderExceededBuffer,
     HeaderDidNotMatch,
+    NoBody,
+    BadBody,
 };
 
 fn IsValidRequestMethod(Method: []const u8) bool
@@ -50,10 +54,11 @@ const http_response_header = struct
     }
 };
 
-fn HandleRequest(Stream: *const net.Stream, dir: fs.Dir) !void
+fn HandleRequest(Stream: *const net.Stream, WebDir: fs.Dir, DataDir: fs.Dir) !void
 {
     const GETs = .{
         .PyIncludePath = "get-py-include-path",
+        .ExtractorOut = "get-extractor-out",
     };
     const PUTs = .{
         .Config = "put-config",
@@ -64,12 +69,12 @@ fn HandleRequest(Stream: *const net.Stream, dir: fs.Dir) !void
     while (Stream.read(RecvBuf[RecvTotal..])) |RecvLen|
     {
         if (RecvLen == 0)
-            return handle_requset_error.RecvHeaderEOF;
+            return handle_request_error.RecvHeaderEOF;
         RecvTotal += RecvLen;
         if (mem.containsAtLeast(u8, RecvBuf[0..RecvTotal], 1, "\r\n\r\n"))
             break;
         if (RecvTotal >= RecvBuf.len)
-            return handle_requset_error.RecvHeaderExceededBuffer;
+            return handle_request_error.RecvHeaderExceededBuffer;
     }
     else |read_err|
         return read_err;
@@ -82,12 +87,12 @@ fn HandleRequest(Stream: *const net.Stream, dir: fs.Dir) !void
 
     const Method = TokItr.next() orelse "";
     if (!IsValidRequestMethod(Method))
-        return handle_requset_error.HeaderDidNotMatch;
+        return handle_request_error.HeaderDidNotMatch;
 
     // Parse resource path
     const Path = TokItr.next() orelse "";
     if (Path[0] != '/')
-        return handle_requset_error.HeaderDidNotMatch;
+        return handle_request_error.HeaderDidNotMatch;
 
     if (mem.eql(u8, Path, "/"))
         ResourcePath = "index"
@@ -95,7 +100,7 @@ fn HandleRequest(Stream: *const net.Stream, dir: fs.Dir) !void
         ResourcePath = Path[1..];
 
     if (!mem.startsWith(u8, TokItr.rest(), "HTTP/1.1\r\n"))
-        return handle_requset_error.HeaderDidNotMatch;
+        return handle_request_error.HeaderDidNotMatch;
 
     if (mem.eql(u8, ResourcePath, GETs.PyIncludePath))
     {
@@ -109,7 +114,7 @@ fn HandleRequest(Stream: *const net.Stream, dir: fs.Dir) !void
         try W.objectField("Entries");
         try W.beginArray();
 
-        var PluginsDir = try fs.cwd().openIterableDir("./data/plugins", .{});
+        var PluginsDir = try DataDir.openIterableDir("./plugins", .{});
         defer PluginsDir.close();
         var PluginsDirIterator = PluginsDir.iterate();
         while (try PluginsDirIterator.next()) |Entry|
@@ -127,9 +132,56 @@ fn HandleRequest(Stream: *const net.Stream, dir: fs.Dir) !void
         try Stream.writer().writeAll(ResponseHeaderStr);
         try Stream.writer().writeAll(ResFBS.getWritten());
     }
+//    else if (mem.eql(u8, ResourcePath, GETs.ExtractorOut))
+//    {
+//        var ResponseHeader = http_response_header{.Status=200, .Mime="basic", .ContentLength=0};
+//        const ResponseHeaderStr = try ResponseHeader.StringifyBasic();
+//        std.log.info(" >>>\n{s}", .{ResponseHeaderStr});
+//        try Stream.writer().writeAll(ResponseHeaderStr);
+//    }
     else if (mem.eql(u8, ResourcePath, PUTs.Config))
     {
-        var ResponseHeader = http_response_header{.Status=200, .Mime="basic", .ContentLength=0};
+
+        var BodyItr = mem.split(u8, RecvSlice, "\r\n\r\n");
+        _ = BodyItr.next() orelse {
+            var ResponseHeader = http_response_header{.Status=400, .Mime="basic",
+                .ContentLength=0};
+            const ResponseHeaderStr = try ResponseHeader.StringifyBasic();
+            std.log.info(" >>>\n{s}", .{ResponseHeaderStr});
+            return handle_request_error.NoBody;
+        };
+        const ConfigStr = BodyItr.rest();
+
+        var ResBackBuf: [BUFSIZ]u8 = undefined;
+        var ResFBA = std.heap.FixedBufferAllocator.init(&ResBackBuf);
+        var Parser = std.json.Parser.init(ResFBA.allocator(), false);
+
+        // Verify writing a valid json string
+        if (std.json.validate(ConfigStr))
+        {
+            const ParseTree = try Parser.parse(ConfigStr);
+            const Root = ParseTree.root;
+            const ConfName = Root.Object.get("ConfName") orelse {
+                return handle_request_error.BadBody;
+            };
+
+            // Write configuration
+            const ConfF = try DataDir.createFile(ConfName.String, .{});
+            defer ConfF.close();
+            try std.json.stringify(Root, .{}, ConfF.writer());
+        }
+        else
+        {
+            var ResponseHeader = http_response_header{.Status=400, .Mime="basic",
+                .ContentLength=0};
+            const ResponseHeaderStr = try ResponseHeader.StringifyBasic();
+            std.log.info(" >>>\n{s}", .{ResponseHeaderStr});
+            try Stream.writer().writeAll(ResponseHeaderStr);
+            return handle_request_error.BadBody;
+        }
+
+        var ResponseHeader = http_response_header{.Status=201, .Mime="basic",
+            .ContentLength=0};
         const ResponseHeaderStr = try ResponseHeader.StringifyBasic();
         std.log.info(" >>>\n{s}", .{ResponseHeaderStr});
         try Stream.writer().writeAll(ResponseHeaderStr);
@@ -158,7 +210,7 @@ fn HandleRequest(Stream: *const net.Stream, dir: fs.Dir) !void
 
         std.log.info("Opening {s}", .{ResourcePath});
 
-        var body_file = dir.openFile(ResourcePath, .{}) catch |err| {
+        var body_file = WebDir.openFile(ResourcePath, .{}) catch |err| {
             const http_404 = "HTTP/1.1 404 Not Found\r\n\r\n404";
             std.log.info(" >>>\n" ++ http_404, .{});
             try Stream.writer().print(http_404, .{});
@@ -215,9 +267,10 @@ pub fn main() !void
     const ExeName = Args.next() orelse "serverexe";
     const PublicPath = Args.next() orelse { PrintUsage(ExeName); return; };
     const DataPath = Args.next() orelse { PrintUsage(ExeName); return; };
-    _ = DataPath;
 
-    var Dir = try fs.cwd().openDir(PublicPath, .{});
+    var WebDir = try fs.cwd().openDir(PublicPath, .{});
+    var DataDir = try fs.cwd().openDir(DataPath, .{});
+
     const SelfAddr = try net.Address.resolveIp("127.0.0.1", 1024);
     var Listener = net.StreamServer.init(.{.reuse_address=true});
     try (&Listener).listen(SelfAddr);
@@ -227,7 +280,7 @@ pub fn main() !void
     while ((&Listener).accept()) |Conn|
     {
         std.log.info("Accepted Connection from: {}", .{Conn.address});
-        HandleRequest(&Conn.stream, Dir) catch |Err|
+        HandleRequest(&Conn.stream, WebDir, DataDir) catch |Err|
         {
             if (@errorReturnTrace()) |Bt| {
                 std.log.err("Failed to serve client: {}: {}", .{Err, Bt});

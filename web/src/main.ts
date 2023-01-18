@@ -1,3 +1,4 @@
+//TODO(cjb): remove category button
 function AddEmptyCat(S: gracie_state, ExtrDefItem: HTMLElement): void
 {
     AddCat(S, ExtrDefItem, "", "", []);
@@ -95,8 +96,8 @@ function UpdateSelectedPattern(TargetPatternInput: HTMLInputElement): void
     TargetPatternInput.setAttribute("IsSelected", "true");
 
     // Also update span text.
-    const TextAreaText = (GetElementByIDOrThrow("text-area") as HTMLTextAreaElement).innerText;
-    const SpanText = GetElementByIDOrThrow("span-text");
+    const TextAreaText = (TryGetElementByID("text-area") as HTMLTextAreaElement).innerText;
+    const SpanText = TryGetElementByID("span-text");
 
     const Re = RegExp(TargetPatternInput.value, "gi"); //TODO(cjb): What flags do I pass here?
     let Matches: RegExpExecArray | null;
@@ -222,7 +223,7 @@ interface gracie_config
     ExtractorDefinitions: extr_def[],
 };
 
-function GetElementByIDOrThrow(ElemId: string): HTMLElement
+function TryGetElementByID(ElemId: string): HTMLElement
 {
     const Elem = document.getElementById(ElemId);
     if (Elem == null)
@@ -241,7 +242,7 @@ function ImportJSONConfig(S: gracie_state, E: Event): void
     }
 
     // Clear out current definitions if any.
-    const ExtrDefsContainer = GetElementByIDOrThrow("extr-defs-container");
+    const ExtrDefsContainer = TryGetElementByID("extr-defs-container");
     ExtrDefsContainer.innerHTML = "";
 
     // Get first file ( should  only be one anyway )
@@ -288,6 +289,26 @@ async function GETIncludePathAndEntries(): Promise<py_include_path_and_entries>
     });
 }
 
+async function GETExtractorOut(): Promise<object>
+{
+    return new Promise((Res, Rej) =>
+    {
+        const Req = new Request("/get-extractor-out");
+        fetch(Req)
+            .then(Res => (Res.body as ReadableStream))
+            .then(RS =>
+            {
+                const Reader = RS.getReader();
+                Reader.read().then(Stream =>
+                {
+                    const JSONStr = new TextDecoder()
+                        .decode(Stream.value);
+                    Res(JSON.parse(JSONStr));
+                });
+            });
+    });
+}
+
 function PUTConfig(ConfStr: string): void
 {
     const Enc = new TextEncoder();
@@ -296,8 +317,8 @@ function PUTConfig(ConfStr: string): void
     fetch(Req)
         .then(Res =>
         {
-            if (Res.status !== 200)
-                throw new Error("Server didn't return 200");
+            if (Res.status !== 201)
+                throw new Error("Server didn't return 201");
         });
 }
 
@@ -305,7 +326,7 @@ function GenJSONConfig(S: gracie_state): string
 {
     const PyIncludePath = S.PyIncludePath;
     let ExtrDefs: extr_def[] = [];
-    const ExtrDefsContainer = GetElementByIDOrThrow("extr-defs-container");
+    const ExtrDefsContainer = TryGetElementByID("extr-defs-container");
     for (const ExtrDefItem of ExtrDefsContainer.children)
     {
         const NameInput = ExtrDefItem.getElementsByClassName("extr-name-input")
@@ -353,7 +374,7 @@ function GenJSONConfig(S: gracie_state): string
         };
         ExtrDefs.push(NewExtrDef);
     }
-    return JSON.stringify({PyIncludePath: PyIncludePath, ExtractorDefinitions: ExtrDefs});
+    return JSON.stringify({ConfName: ConfName, PyIncludePath: PyIncludePath, ExtractorDefinitions: ExtrDefs});
 }
 
 function EscapeRegex(Regex: string): string
@@ -377,6 +398,8 @@ function RegexifyLiteral(Str: string): string
     return EscapeRegex(Str.toLowerCase());
 }
 
+const ConfName = "webs_conf.json"; //TODO(cjb): Make this a texbox
+
 ///
 /// Sets up the initial DOM structure, and state.
 ///
@@ -388,6 +411,7 @@ function Init(): void
     document.title = PossibleTitles[Math.round(Math.random() * 100) % PossibleTitles.length];
 
     let S = {} as gracie_state;
+
     const IncludePathAndEntries = GETIncludePathAndEntries()
         .then((IncludePathAndEntries) =>
     {
@@ -511,10 +535,12 @@ function Init(): void
 
     const RunExtractor = document.createElement("button");
     RunExtractor.innerText = "Run extractor";
-    RunExtractor.onclick = () =>
+    RunExtractor.onclick = async () =>
     {
         const JSONConfigStr = GenJSONConfig(S);
         PUTConfig(JSONConfigStr);
+//        const ExtractorOut = await GETExtractorOut();
+//        console.log(ExtractorOut);
     }
     AContainer.appendChild(RunExtractor);
 
