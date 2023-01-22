@@ -64,9 +64,9 @@ pub fn build(B: *std.build.Builder) void {
     const Server = B.addExecutable("webserv", "src/webserv.zig");
     Server.setOutputDir("./bin");
     Server.setBuildMode(Mode);
-//    Packager.linkSystemLibrary("hs");
-//    Packager.addIncludePath("/usr/include/hs/");
-//    Packager.linkLibC();
+    Server.linkSystemLibrary("hs");
+    Server.addIncludePath("/usr/include/hs/");
+    Server.linkLibC();
     Server.install();
 
     // C API Check exe

@@ -21,8 +21,8 @@ pub fn main() !void
     try CreateArtifact(Ally, ConfPathZ, ArtiPathZ);
 }
 
-pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: [:0]const u8,
-    ArtiPathZ: [:0]const u8) !void
+pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
+    ArtiPathZ: []const u8) !void
 {
 //
 // Compute absolute path to config's parent dir

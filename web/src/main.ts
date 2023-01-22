@@ -289,27 +289,23 @@ async function GETIncludePathAndEntries(): Promise<py_include_path_and_entries>
     });
 }
 
-async function GETExtractorOut(): Promise<object>
+function TryPUTExtractorOut(Text: string, ConfName: string): any
 {
-    return new Promise((Res, Rej) =>
-    {
-        const Req = new Request("/get-extractor-out");
-        fetch(Req)
-            .then(Res => (Res.body as ReadableStream))
-            .then(RS =>
-            {
-                const Reader = RS.getReader();
-                Reader.read().then(Stream =>
-                {
-                    const JSONStr = new TextDecoder()
-                        .decode(Stream.value);
-                    Res(JSON.parse(JSONStr));
-                });
-            });
-    });
+    let RequestJSON = {ConfName: ConfName, Text: Text};
+    const Enc = new TextEncoder();
+    const View = Enc.encode(JSON.stringify(RequestJSON));
+    const Req = new Request("/get-extractor-out", {method: "PUT", body: View});
+    fetch(Req)
+        .then(Res =>
+        {
+            if (Res.status === 200)
+                return Res.json();
+            else
+                throw new Error("Server didn't return 200");
+        });
 }
 
-function PUTConfig(ConfStr: string): void
+function TryPUTConfig(ConfStr: string): void
 {
     const Enc = new TextEncoder();
     const View = Enc.encode(ConfStr);
@@ -535,12 +531,12 @@ function Init(): void
 
     const RunExtractor = document.createElement("button");
     RunExtractor.innerText = "Run extractor";
-    RunExtractor.onclick = async () =>
+    RunExtractor.onclick = () =>
     {
         const JSONConfigStr = GenJSONConfig(S);
-        PUTConfig(JSONConfigStr);
-//        const ExtractorOut = await GETExtractorOut();
-//        console.log(ExtractorOut);
+        TryPUTConfig(JSONConfigStr);
+        const ExtractorOut = TryPUTExtractorOut(TA.innerText, ConfName);
+        console.log(ExtractorOut);
     }
     AContainer.appendChild(RunExtractor);
 
