@@ -7,14 +7,17 @@ This project adheres to [semver](https://semver.org/)
 - .gitignore
 - Regex highlighting for selected patterns
 - Server writes configurations built in the web interface to disk.
+- Server can run packager and create artifacts from a web request.
+- Server can call extractor from a web request.
 
 ### Changed
+- Extractor's Zig Init API no longer requires null terminated artifact path.
 - Packager exposes artifact creation functionality.
 - Refactoring of python module selector population.
 - When selecting text the pattern input which was last selected (if any) is filled with the user's
     text selection converted to a basic regex pattern.
 - Set resuse address flag when initializing stream server.
-- Refactored http request header creation.
+- Refactor HTTP response creation.
 
 ### Removed
 - Needless async functions

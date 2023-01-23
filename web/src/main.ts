@@ -289,20 +289,26 @@ async function GETIncludePathAndEntries(): Promise<py_include_path_and_entries>
     });
 }
 
-function TryPUTExtractorOut(Text: string, ConfName: string): any
+async function TryPUTExtractorOut(Text: string, ConfName: string): Promise<any>
 {
-    let RequestJSON = {ConfName: ConfName, Text: Text};
-    const Enc = new TextEncoder();
-    const View = Enc.encode(JSON.stringify(RequestJSON));
-    const Req = new Request("/get-extractor-out", {method: "PUT", body: View});
-    fetch(Req)
-        .then(Res =>
-        {
-            if (Res.status === 200)
-                return Res.json();
-            else
-                throw new Error("Server didn't return 200");
-        });
+    return new Promise((Res, Rej) =>
+    {
+        let RequestJSON = {ConfName: ConfName, Text: Text};
+        const Enc = new TextEncoder();
+        const View = Enc.encode(JSON.stringify(RequestJSON));
+        const Req = new Request("/put-extractor-out", {method: "PUT", body: View});
+        fetch(Req)
+            .then(Res => (Res.body as ReadableStream))
+            .then(RS =>
+            {
+                const Reader = RS.getReader();
+                Reader.read().then(Stream =>
+                {
+                    const ResponseJSON = new TextDecoder().decode(Stream.value);
+                    Res(ResponseJSON);
+                });
+            });
+    });
 }
 
 function TryPUTConfig(ConfStr: string): void
@@ -535,8 +541,11 @@ function Init(): void
     {
         const JSONConfigStr = GenJSONConfig(S);
         TryPUTConfig(JSONConfigStr);
-        const ExtractorOut = TryPUTExtractorOut(TA.innerText, ConfName);
-        console.log(ExtractorOut);
+        TryPUTExtractorOut(TA.innerText, ConfName).then(ExtractorOut =>
+        {
+            // NOTE(cjb): Hack... will have something more formal.
+            DEBUGDisplayConfig.innerText = JSON.stringify(ExtractorOut);
+        });
     }
     AContainer.appendChild(RunExtractor);
 

@@ -5,11 +5,14 @@
 
 const std = @import("std");
 const packager = @import("./packager.zig");
+const gracie = @import("./gracie.zig");
 
 const net = std.net;
 const mem = std.mem;
 const fs = std.fs;
 const io = std.io;
+
+const allocator = std.mem.Allocator;
 
 const BUFSIZ = 8196;
 const DEFAULT_PLUGINS_PATH = "./plugins"; // TODO(cjb): Pass me somewhere
@@ -45,6 +48,7 @@ const http_response_header = struct
             200 => return "OK",
             201 => return "Created",
             400 => return "Bad Request",
+            404 => return "Not Found",
             else => unreachable,
         }
     }
@@ -61,9 +65,7 @@ const http_response_header = struct
             .{Self.Status, StatusDesc(Self.Status), Self.Mime, Self.ContentLength});
     }
 };
-
-
-fn WriteHeader(Stream: *const net.Stream, Status: u16) !void
+fn WriteBasicResponse(Stream: *const net.Stream, Status: u16) !void
 {
     var ResponseHeader = http_response_header{.Status=Status, .Mime="basic", .ContentLength=0};
     const ResponseHeaderStr = try ResponseHeader.Stringify();
@@ -73,9 +75,20 @@ fn WriteHeader(Stream: *const net.Stream, Status: u16) !void
     try Stream.writer().writeAll(ResponseHeaderStr);
 }
 
+fn WriteResponseWithBody(Stream: *const net.Stream, Status: u16, Content: []u8) !void
+{
+    var ResponseHeader = http_response_header{.Status=Status, .Mime="application/json",
+        .ContentLength=Content.len};
+    const ResponseHeaderStr = try ResponseHeader.Stringify();
+
+    std.log.info(" >>>\n{s}{s}", .{ResponseHeaderStr, Content});
+
+    try Stream.writer().writeAll(ResponseHeaderStr);
+    try Stream.writer().writeAll(Content);
+}
 
 //TODO(cjb): Pass data dir path instead of directory. and fix resolving artifact/config paths.
-fn HandleHTTPRequest(Stream: *const net.Stream, WebDir: fs.Dir, DataDir: fs.Dir) !void
+fn HandleHTTPRequest(Ally: allocator, Stream: *const net.Stream, WebDir: fs.Dir, DataDir: fs.Dir) !void
 {
     // Read input stream into buffer.
 
@@ -136,17 +149,18 @@ fn HandleHTTPRequest(Stream: *const net.Stream, WebDir: fs.Dir, DataDir: fs.Dir)
         ResourcePath = TmpResourcePath[1..];
     }
 
+    // Validate protocol section of the header.
+
     if (!mem.startsWith(u8, TokItr.rest(), "HTTP/1.1\r\n"))
     {
         return handle_request_error.HeaderDidNotMatch;
     }
 
-//
-// Resolve path, i.e. is this an API request? or should we serve up a file?
-//
-
     if (mem.eql(u8, Method, "GET"))
     {
+
+        // Get py include path
+
         if (mem.eql(u8, ResourcePath, "get-py-include-path"))
         {
             var ResponseBackBuf: [BUFSIZ]u8 = undefined;
@@ -179,74 +193,19 @@ fn HandleHTTPRequest(Stream: *const net.Stream, WebDir: fs.Dir, DataDir: fs.Dir)
 
             // Send OK header along with whatever JSON was written.
 
-            try WriteHeader(Stream, 200); //TODO(cjb): WriteResponse which also takes a body??
+            var ResponseHeader = http_response_header{.Status=200, .Mime="application/json",
+                .ContentLength=ResponseStream.getWritten().len};
+            const ResponseHeaderStr = try ResponseHeader.Stringify();
+
+            std.log.info(" >>>\n{s}{s}", .{ResponseHeaderStr, ResponseStream.getWritten()});
+
+            try Stream.writer().writeAll(ResponseHeaderStr);
             try Stream.writer().writeAll(ResponseStream.getWritten());
         }
-        else if (mem.eql(u8, ResourcePath, "get-extractor-out")) //TODO(cjb): left off here...
-        {
-            var BodyItr = mem.split(u8, RecvSlice, "\r\n\r\n");
-            _ = BodyItr.next() orelse {
-                try WriteHeader(Stream, 400);
-                return handle_request_error.BadRequest;
-            };
-            const ConfigStr = BodyItr.rest();
 
-            var ResBackBuf: [BUFSIZ]u8 = undefined;
-            var ResFBA = std.heap.FixedBufferAllocator.init(&ResBackBuf);
-            var Parser = std.json.Parser.init(ResFBA.allocator(), false);
+        // Serve file
 
-            // Verify writing a valid json string
-            if (std.json.validate(ConfigStr))
-            {
-                const ParseTree = try Parser.parse(ConfigStr);
-                const Root = ParseTree.root;
-                const ConfName = Root.Object.get("ConfName") orelse {
-                    return handle_request_error.BadRequest;
-                };
-
-                var PathBuf: [fs.MAX_PATH_BYTES]u8 = undefined;
-                var StemConfName = fs.path.stem(ConfName.String);
-                var PathFBS = io.fixedBufferStream(&PathBuf);
-                try PathFBS.writer().print("{s}.bin", .{StemConfName});
-                ResourcePath = PathFBS.getWritten();
-
-                var Ally = std.heap.page_allocator;
-                //TODO(cjb): Pass artifact file??? Because this is dumb
-                var ArtifactF = try DataDir.createFile(StemConfName, .{});
-                ArtifactF.close();
-                var RealConfNamePath = try DataDir.realpathAlloc(Ally, StemConfName);
-                defer Ally.free(RealConfNamePath);
-
-                var RealArtifactPath = DataDir.realpathAlloc(Ally, ResourcePath) catch {
-                    // TODO switch on err
-                    try WriteHeader(Stream, 400);
-                    return handle_request_error.BadRequest;
-                };
-                defer Ally.free(RealArtifactPath);
-
-                packager.CreateArtifact(Ally, RealConfNamePath, RealArtifactPath) catch {
-                    // TODO switch on err
-                    try WriteHeader(Stream, 400);
-                    return handle_request_error.BadRequest;
-                };
-
-                // Write configuration
-                const ConfF = try DataDir.createFile(ConfName.String, .{});
-                defer ConfF.close();
-                try std.json.stringify(Root, .{}, ConfF.writer());
-
-                // Generate artifact from given config
-                // Initialize extractor with artifact
-                try WriteHeader(Stream, 200);
-                _ = try Stream.writer().write("{}");
-            }
-            else
-            {
-                try WriteHeader(Stream, 400);
-                return handle_request_error.BadRequest;
-            }
-        }
-        else // Orelse handle serving up a file.
+        else //TODO(Cjb): refactorize me!
         {
             const Mimes = .{
                 .{".html", "text/html"},
@@ -315,47 +274,155 @@ fn HandleHTTPRequest(Stream: *const net.Stream, WebDir: fs.Dir, DataDir: fs.Dir)
             }
         }
     }
+
+    // Put extractor out
+
+    else if (mem.eql(u8, ResourcePath, "put-extractor-out"))
+    {
+
+        // Get Body of request delimited by \r\n\r\n ( should be a JSON str )
+
+        var BodyItr = mem.split(u8, RecvSlice, "\r\n\r\n");
+        _ = BodyItr.next() orelse {
+            try WriteBasicResponse(Stream, 400);
+            return handle_request_error.BadRequest;
+        };
+        const ConfigStr = BodyItr.rest();
+
+        // Validate JSON
+
+        if (!std.json.validate(ConfigStr))
+        {
+            try WriteBasicResponse(Stream, 400);
+            return handle_request_error.BadRequest;
+        }
+
+        // Parse JSON
+
+        var Parser = std.json.Parser.init(Ally, false);
+        defer Parser.deinit();
+        const ParseTree = try Parser.parse(ConfigStr);
+        const Root = ParseTree.root;
+
+//
+// Turn JSON's 'ConfName' field into an absoulute path. Also strip it's extension and use
+//  it's stem appended with a '.bin' as the artifact path.
+// Then create the artifact with a absolute paths to the configuration and artifact.
+//
+
+        // Strip 'ConfName's old extension and append '.bin'.
+
+        const ConfName = Root.Object.get("ConfName") orelse {
+            return handle_request_error.BadRequest;
+        };
+        var StemConfName = fs.path.stem(ConfName.String);
+        var PathBuf: [fs.MAX_PATH_BYTES]u8 = undefined;
+        var PathStream = io.fixedBufferStream(&PathBuf);
+        try PathStream.writer().print("{s}.bin", .{StemConfName});
+        const ArtifactPath = PathStream.getWritten();
+
+        // Create artifact file upfront so it's pathname can be resolved by 'realpathAlloc'.
+
+        const ArtifactF = try DataDir.createFile(ArtifactPath, .{});
+        ArtifactF.close();
+
+        // Real path to config & artifact file(s)
+
+        var RealArtifactPath = DataDir.realpathAlloc(Ally, ArtifactPath) catch {
+            try WriteBasicResponse(Stream, 400);
+            return handle_request_error.BadRequest;
+        };
+        defer Ally.free(RealArtifactPath);
+        var RealConfNamePath = try DataDir.realpathAlloc(Ally, ConfName.String);
+        defer Ally.free(RealConfNamePath);
+
+        // Create artifact
+
+        packager.CreateArtifact(Ally, RealConfNamePath, RealArtifactPath) catch {
+            // TODO switch on err
+            try WriteBasicResponse(Stream, 400);
+            return handle_request_error.BadRequest;
+        };
+
+        // Run extractor
+
+        var G = try gracie.Init(Ally, RealArtifactPath);
+        defer G.Deinit();
+        const Text = Root.Object.get("Text") orelse {
+            return handle_request_error.BadRequest;
+        };
+        const ExtractorOut = try G.Extract(Text.String);
+
+        // Write response
+
+        var ResponseHeader = http_response_header{.Status=200, .Mime="application/json",
+            .ContentLength=ExtractorOut.len};
+        const ResponseHeaderStr = try ResponseHeader.Stringify();
+
+        std.log.info(" >>>\n{s}{s}", .{ResponseHeaderStr, ExtractorOut});
+
+        try Stream.writer().writeAll(ResponseHeaderStr);
+        try Stream.writer().writeAll(ExtractorOut);
+    }
     else if (mem.eql(u8, Method, "PUT"))
     {
+
+        // Put config
+
         if (mem.eql(u8, ResourcePath, "put-config"))
         {
+
+            // Get Body of request delimited by \r\n\r\n ( should be a JSON str )
+
             var BodyItr = mem.split(u8, RecvSlice, "\r\n\r\n");
             _ = BodyItr.next() orelse {
-                try WriteHeader(Stream, 400);
+                try WriteBasicResponse(Stream, 400);
                 return handle_request_error.BadRequest;
             };
             const ConfigStr = BodyItr.rest();
 
-            var ResBackBuf: [BUFSIZ]u8 = undefined;
-            var ResFBA = std.heap.FixedBufferAllocator.init(&ResBackBuf);
-            var Parser = std.json.Parser.init(ResFBA.allocator(), false);
+            // Verify writing a valid json string.
 
-            // Verify writing a valid json string
             if (std.json.validate(ConfigStr))
             {
-                const ParseTree = try Parser.parse(ConfigStr);
-                const Root = ParseTree.root;
-                const ConfName = Root.Object.get("ConfName") orelse {
-                    try WriteHeader(Stream, 400);
-                    return handle_request_error.BadRequest;
-                };
 
-                // Write configuration
-                const ConfF = try DataDir.createFile(ConfName.String, .{});
-                defer ConfF.close();
-                try std.json.stringify(Root, .{}, ConfF.writer());
-                try WriteHeader(Stream, 201); // Created
-            }
-            else
-            {
-                try WriteHeader(Stream, 400);
+                try WriteBasicResponse(Stream, 400);
                 return handle_request_error.BadRequest;
             }
+
+            // Retrieve 'ConfName' from JSON.
+
+            var Parser = std.json.Parser.init(Ally, false);
+            const ParseTree = try Parser.parse(ConfigStr);
+            const Root = ParseTree.root;
+            const ConfName = Root.Object.get("ConfName") orelse {
+                try WriteBasicResponse(Stream, 400);
+                return handle_request_error.BadRequest;
+            };
+
+            // Write entire JSON str as 'ConfName'.
+
+            const ConfF = try DataDir.createFile(ConfName.String, .{});
+            defer ConfF.close();
+            try std.json.stringify(Root, .{}, ConfF.writer());
+
+            // Write basic 201 ( created ) response
+
+            try WriteBasicResponse(Stream, 201);
         }
+    }
+
+    // Handle unknown request method with a 404
+
+    else
+    {
+        const HTTP404 = "HTTP/1.1 404 Not Found\r\n\r\n404";
+        std.log.info(" >>>\n" ++ HTTP404, .{});
+        try Stream.writer().print(HTTP404, .{});
     }
 }
 
-fn PrintUsage(ExeName: []const u8) void
+fn Usage(ExeName: []const u8) void
 {
     std.log.err("Usage: {s} <dir to serve files from> <dir to write data to>", .{ExeName});
 }
@@ -364,8 +431,8 @@ pub fn main() !void
 {
     var Args = std.process.args();
     const ExeName = Args.next() orelse "serverexe";
-    const PublicPath = Args.next() orelse { PrintUsage(ExeName); return; };
-    const DataPath = Args.next() orelse { PrintUsage(ExeName); return; };
+    const PublicPath = Args.next() orelse { Usage(ExeName); return; };
+    const DataPath = Args.next() orelse { Usage(ExeName); return; };
 
     var WebDir = try fs.cwd().openDir(PublicPath, .{});
     var DataDir = try fs.cwd().openDir(DataPath, .{});
@@ -374,12 +441,14 @@ pub fn main() !void
     var Listener = net.StreamServer.init(.{.reuse_address=true});
     try (&Listener).listen(SelfAddr);
 
+    var Ally = std.heap.page_allocator;
+
     std.log.info("Listening on {}; press Ctrl-C to exit...", .{SelfAddr});
 
     while ((&Listener).accept()) |Conn|
     {
         std.log.info("Accepted Connection from: {}", .{Conn.address});
-        HandleHTTPRequest(&Conn.stream, WebDir, DataDir) catch |Err|
+        HandleHTTPRequest(Ally, &Conn.stream, WebDir, DataDir) catch |Err|
         {
             if (@errorReturnTrace()) |Bt| {
                 std.log.err("Failed to serve client: {}: {}", .{Err, Bt});

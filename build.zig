@@ -5,7 +5,7 @@ pub fn build(B: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const Mode = B.standardReleaseOptions();
 
-    const Gracie = B.addSharedLibrary("gracie", "src/gracie.zig", B.version(0, 0, 4));
+    const Gracie = B.addSharedLibrary("gracie", "src/gracie.zig", B.version(0, 1, 1));
     Gracie.setBuildMode(Mode);
     Gracie.setOutputDir("./lib");
     Gracie.addIncludePath("/usr/include/hs/");
@@ -52,6 +52,7 @@ pub fn build(B: *std.build.Builder) void {
     TestStep.dependOn(&GracieTests.step);
 
     // Packager exe
+
     const Packager = B.addExecutable("packager", "src/packager.zig");
     Packager.setOutputDir("./bin");
     Packager.setBuildMode(Mode);
@@ -61,15 +62,19 @@ pub fn build(B: *std.build.Builder) void {
     Packager.install();
 
     // Webserver
+
     const Server = B.addExecutable("webserv", "src/webserv.zig");
     Server.setOutputDir("./bin");
-    Server.setBuildMode(Mode);
     Server.linkSystemLibrary("hs");
+    Server.addIncludePath("/usr/include/python3.11");
     Server.addIncludePath("/usr/include/hs/");
-    Server.linkLibC();
+    Server.setBuildMode(Mode);
     Server.install();
+    Server.linkLibC();
+    Server.linkLibrary(Gracie);
 
     // C API Check exe
+
     const CAPICheck = B.addExecutable("capi_check", null);
     CAPICheck.setOutputDir("./bin");
     CAPICheck.setBuildMode(Mode);
