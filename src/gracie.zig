@@ -122,21 +122,23 @@ export fn GracieInit(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv
     var Ally = std.heap.page_allocator;
     Self.?.* = Ally.create(self) catch |Err|
         return ErrToCode(Err);
-    Self.?.*.?.* = Init(Ally, ArtifactPathZ) catch |Err|
+
+    var PathLen: usize = 0;
+    while (ArtifactPathZ.?[PathLen] != 0) { PathLen += 1; }
+
+    Self.?.*.?.* = Init(Ally, ArtifactPathZ.?[0 .. PathLen]) catch |Err|
         return ErrToCode(Err);
     return GRACIE_SUCCESS;
 }
 
-pub fn Init(Ally: allocator, ArtifactPathZ: ?[* :0]const u8) !self
+pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
 {
     var Self: self = undefined;
     Self.Ally = Ally;
 
     // Open artifact file and obtain header in order to begin parsing.
-    var PathLen: usize = 0;
-    while (ArtifactPathZ.?[PathLen] != 0) { PathLen += 1; }
 
-    const ArtiF = try std.fs.cwd().openFile(ArtifactPathZ.?[0..PathLen], .{});
+    const ArtiF = try std.fs.cwd().openFile(ArtifactPath, .{});
     defer ArtiF.close();
 
     const R = ArtiF.reader();
