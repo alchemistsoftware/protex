@@ -20,13 +20,21 @@ function AddCat(S: gracie_state, ExtrDefItem: HTMLElement, Name: string, MainPyM
     CategoryNameInput.value = Name;
     CategoryFieldsItem.appendChild(CategoryNameInput);
 
-    // Main python module selector
     const MainPyModuleSelect = document.createElement("select") as HTMLSelectElement;
     MainPyModuleSelect.className = "main-py-module-select";
     CategoryFieldsItem.appendChild(MainPyModuleSelect);
 
+    const RemoveCategoryButton = document.createElement("button");
+    RemoveCategoryButton.innerText = "Remove Category";
+    RemoveCategoryButton.onclick = () =>
+    {
+        CategoryFieldsItem.remove();
+    };
+    CategoryFieldsItem.appendChild(RemoveCategoryButton);
+
     // NOTE(cjb): First selector added to document is source of truth for avaliable modules..
     //  sot (source of truth)
+
     let SOTSelector = document.getElementById(
         "sot-main-py-module-select") as HTMLSelectElement | null;
     if (SOTSelector == null)
@@ -149,12 +157,10 @@ function AddExtr(S: gracie_state, ExtrName: string, Country: string, Language: s
         throw "Couldn't get div with id 'extr-defs-container'";
     }
 
-    // Create new extractor definition item
     const ExtrDefItem = document.createElement("div");
     ExtrDefItem.className = "extr-def-item";
     ExtrDefsContainer.appendChild(ExtrDefItem);
 
-    // Add name, country, and language to it.
     const NewExtrNameInput = document.createElement("input") as HTMLInputElement;
     NewExtrNameInput.className = "extr-name-input";
     NewExtrNameInput.value = ExtrName;
@@ -172,11 +178,18 @@ function AddExtr(S: gracie_state, ExtrName: string, Country: string, Language: s
     NewExtrLanguageInput.maxLength = 2;
     ExtrDefItem.appendChild(NewExtrLanguageInput);
 
-    // Attach an add category button.
     const AddCategoryButton = document.createElement("button");
     AddCategoryButton.innerText = "New category";
     AddCategoryButton.onclick = () => AddEmptyCat(S, ExtrDefItem);
     ExtrDefItem.appendChild(AddCategoryButton);
+
+    const RemoveExtractorButton = document.createElement("button");
+    RemoveExtractorButton.innerText = "Remove Extractor";
+    RemoveExtractorButton.onclick = () =>
+    {
+        ExtrDefItem.remove();
+    };
+    ExtrDefItem.appendChild(RemoveExtractorButton);
 
     return ExtrDefItem;
 }
@@ -402,9 +415,6 @@ function RegexifyLiteral(Str: string): string
 
 const ConfName = "webs_conf.json"; //TODO(cjb): Make this a texbox
 
-///
-/// Sets up the initial DOM structure, and state.
-///
 function Init(): void
 {
     // Set a fun title
