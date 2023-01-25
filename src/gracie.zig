@@ -24,7 +24,9 @@ const match = struct
 const cat_box = struct
 {
     Name: []u8,
-    MainPyModuleIndex: usize,
+    Conditions: []u8,
+    MainPyModuleIndex: isize,
+    OnMatchType: common.arti_cat_on_match,
     StartPatternID: c_uint,
     EndPatternID: c_uint,
 };
@@ -223,32 +225,38 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
 //
 // Read category data
 //
-        ExtrDef.CatBoxes = try Self.Ally.alloc(cat_box, DefHeader.nCategories);
 
+        ExtrDef.CatBoxes = try Self.Ally.alloc(cat_box, DefHeader.nCategories);
         var PatternSum: usize = 0;
         var CatIndex: usize = 0;
         while (CatIndex < DefHeader.nCategories) : (CatIndex += 1)
         {
             const CatHeader = try R.readStruct(common.arti_cat_header);
 
-            // Category name
             var Name = try Ally.alloc(u8, CatHeader.nCategoryNameBytes);
             debug.assert(try R.readAll(Name) == CatHeader.nCategoryNameBytes);
 
-            // Pattern count
+            var Conditions = try Ally.alloc(u8, CatHeader.nCategoryConditionBytes);
+            debug.assert(try R.readAll(Conditions) == CatHeader.nCategoryConditionBytes);
+
             var nPatternsForCategory: usize = undefined;
             debug.assert(try R.readAll(@ptrCast([*]u8, &nPatternsForCategory)
                     [0 .. @sizeOf(usize)]) == @sizeOf(usize));
             PatternSum += nPatternsForCategory;
 
-            // Mainpy module index
-            var MainPyModuleIndex: usize = undefined;
+            var MainPyModuleIndex: isize = undefined;
             debug.assert(try R.readAll(@ptrCast([*]u8, &MainPyModuleIndex)
-                    [0 .. @sizeOf(usize)]) == @sizeOf(usize));
+                    [0 .. @sizeOf(isize)]) == @sizeOf(isize));
+
+            var OnMatchType: common.arti_cat_on_match = undefined;
+            debug.assert(try R.readAll(@ptrCast([*]u8, &OnMatchType)
+                    [0 .. @sizeOf(c_int)]) == @sizeOf(c_int));
 
            ExtrDef.CatBoxes[CatIndex] = cat_box{
                .Name = Name,
+               .Conditions = Conditions,
                .MainPyModuleIndex = MainPyModuleIndex,
+               .OnMatchType = OnMatchType,
                .StartPatternID = @intCast(c_uint, PatternSum - nPatternsForCategory),
                .EndPatternID = @intCast(c_uint, PatternSum),
            };
@@ -263,7 +271,7 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
     return Self;
 }
 
-fn EventHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
+fn HSMatchHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
     Ctx: ?*anyopaque) callconv(.C) c_int
 {
     const MatchList = @ptrCast(?*array_list(match),
@@ -288,81 +296,107 @@ export fn GracieExtract(Ctx: ?*?*anyopaque, Text: ?[*]const u8,
 
 pub fn Extract(Self: *self, Text: []const u8) ![]u8
 {
-    // Initialize fixed buffer allocator from scratch space.
     var FBAlly = fixed_buffer_allocator.init(Self.FBackBuf);
 
-    // Init MatchList
+    // Initialize match list which will store HYPERSCAN matches.
+
     var MatchList = array_list(match).init(FBAlly.allocator());
 
-    // Allocate buffer for SempyRun output
+    // Allocate fixed buffers for stream & sempy output.
+
     var SempyRunBuf = try FBAlly.allocator().alloc(u8, 1024*1);
+    var ReturnBuf = try FBAlly.allocator().alloc(u8, 1024*2);
 
-    var Parser = std.json.Parser.init(FBAlly.allocator(), false); // Copy strings = false
-    var ReturnBuf: []u8 = try FBAlly.allocator().alloc(u8, 1024*2); // 2kib for json buffer
-    var SliceStream = std.io.fixedBufferStream(ReturnBuf);
-    var W = std.json.writeStream(SliceStream.writer(), 5);
+    // Initialize an output stream for our JSON writer.
+
+    var JSONStream = std.io.fixedBufferStream(ReturnBuf);
+    var W = std.json.writeStream(JSONStream.writer(), 5);
+
     try W.beginObject();
-
-    for (Self.ExtrDefs) |Def|
+    for (Self.ExtrDefs) |ExtractorDef|
     {
-        var nBytesCopied: usize = 0;
-        MatchList.clearRetainingCapacity();
-        Parser.reset();
+        // Scan this extractor's HYPERSCAN database.
 
-        try W.objectField(Def.Name);
+        MatchList.clearRetainingCapacity();
+        try HSCodeToErr(c.hs_scan(ExtractorDef.Database, Text.ptr,
+                @intCast(c_uint, Text.len), 0, Self.Scratch, HSMatchHandler, &MatchList));
+
+        // Begin JSON array labeled with this extractor's name containing categories.
+
+        try W.objectField(ExtractorDef.Name);
         try W.beginArray();
 
-        // Hyperscannnnn!!
-        try HSCodeToErr(c.hs_scan(Def.Database, Text.ptr, @intCast(c_uint, Text.len), 0, Self.Scratch,
-                EventHandler, &MatchList));
-        for (MatchList.items) |M|
+        //TODO(cjb): Handle multi matches within same category
+
+        for (MatchList.items) |Match|
         {
             try W.arrayElem();
             try W.beginObject();
 
-            //TODO(cjb): What happens when you get more than one match per category?
+            // Determine which category was matched.
+
             var CatIndex: usize = 0;
-            for (Def.CatBoxes) |Cat|
+            for (ExtractorDef.CatBoxes) |Cat|
             {
-                if ((M.ID >= Cat.StartPatternID) and
-                    (M.ID < Cat.EndPatternID))
+                if ((Match.ID >= Cat.StartPatternID) and
+                    (Match.ID < Cat.EndPatternID))
                 {
                     break;
                 }
                 CatIndex += 1;
             }
-            const MainModuleIndex = Def.CatBoxes[CatIndex].MainPyModuleIndex;
-            const CatName = Def.CatBoxes[CatIndex].Name;
+            const Cat = ExtractorDef.CatBoxes[CatIndex];
 
-            // TODO(cjb): Have sempy alloc a buffer for you.
-            nBytesCopied = try sempy.Run(Self.PyCallbacks.items[MainModuleIndex],
-                Text[M.SO .. M.EO], SempyRunBuf);
+            switch (Cat.OnMatchType)
+            {
+                .Script =>
+                {
+                    debug.assert(Cat.MainPyModuleIndex != -1);
 
-            try W.objectField(CatName);
-            try W.emitString(SempyRunBuf[0..nBytesCopied]);
+                    var nBytesCopied = try sempy.Run(
+                        Self.PyCallbacks.items[@intCast(usize, Cat.MainPyModuleIndex)],
+                        Text[Match.SO .. Match.EO],
+                        SempyRunBuf);
+
+                    try W.objectField(Cat.Name);
+                    try W.emitString(SempyRunBuf[0..nBytesCopied]);
+                },
+
+                .Conditional =>
+                {
+                    var CondItr = std.mem.tokenize(u8, Cat.Conditions, " ");
+
+                    debug.assert(std.mem.eql(u8, CondItr.next() orelse "", "TAG"));
+
+                    // NOTE(cjb): Right now all I care about is the truthiness. Other
+                    //  fields will get integrated later. Probably...
+
+                    const Truthiness = CondItr.next() orelse "";
+                    debug.assert(std.mem.eql(u8, Truthiness, "TRUE") or
+                                 std.mem.eql(u8, Truthiness, "FALSE"));
+
+                    try W.objectField(Cat.Name);
+                    try W.emitString(Truthiness);
+                },
+            }
+
+            // Spit out match indicies ( mostly for web client's benifit )
+
             try W.objectField("SO");
-            try W.emitNumber(M.SO);
+            try W.emitNumber(Match.SO);
             try W.objectField("EO");
-            try W.emitNumber(M.EO);
-            try W.endObject();
+            try W.emitNumber(Match.EO);
 
-            // Verify writing a valid json string
-            //if (std.json.validate(@ptrCast([*]const u8, SempyRunBuf.ptr)[0 .. nBytesCopied]))
-            //{
-            //    const ParseTree = try Parser.parse(SempyRunBuf[0..nBytesCopied]);
-            //    const RootJsonObj = ParseTree.root;
-            //    try W.emitJson(RootJsonObj);
-            //}
-            //else
-            //{
-            //    try W.emitString("Bad json");
-            //}
+            try W.endObject(); // End this category's JSON blurb.
         }
-        try W.endArray();
-    }
-    try W.endObject();
 
-    return SliceStream.getWritten();
+        // Resolve conditions here..
+
+        try W.endArray(); // End extractor's list of JSON blurbs.
+    }
+    try W.endObject(); // End root JSON object.
+
+    return JSONStream.getWritten(); // Return JSON which was just written.
 }
 
 export fn GracieDeinit(Ctx: ?*?*anyopaque) callconv(.C) c_int
@@ -382,7 +416,11 @@ pub fn Deinit(Self: *self) void
     for (Self.ExtrDefs) |Def|
     {
         Self.Ally.free(Def.Name);
-        for (Def.CatBoxes) |Cat| Self.Ally.free(Cat.Name);
+        for (Def.CatBoxes) |Cat|
+        {
+            Self.Ally.free(Cat.Name);
+            Self.Ally.free(Cat.Conditions);
+        }
         Self.Ally.free(Def.CatBoxes);
         Self.Ally.free(@ptrCast([*]u8, Def.Database.?)[0 .. Def.nDatabaseBytes]);
     }
@@ -412,6 +450,6 @@ test "Gracie"
 {
     var Ally = std.testing.allocator;
     var G = try self.Init(Ally, "./data/gracie.bin");
-    _ = try self.Extract(&G, "Earn $30 an hour"); // TODO(cjb): Print this..
+    _ = try self.Extract(&G, "Earn $30 an hour");
     self.Deinit(&G);
 }
