@@ -13,7 +13,6 @@ const array_list = std.ArrayList;
 
 const self = @This();
 
-// NOTE(cjb): Keep in mind this will need to be exposed at some point or another.
 const match = struct
 {
     SO: c_ulonglong,
@@ -90,14 +89,15 @@ fn HSCodeToErr(ReturnCode: c_int) !void
     }
 }
 
-/// Convert zig errs to status code.
+/// Map zig errors to status code.
 fn ErrToCode(Err: anyerror) c_int
 {
     std.log.err("{}", .{Err});
     switch(Err)
     {
         error.OutOfMemory => return GRACIE_NOMEM,
-        error.FileNotFound => return GRACIE_INVALID,
+        error.FileNotFound,
+        error.BadConditonStatment => return GRACIE_INVALID,
         error.HSInvalid,
         error.HSNoMem,
         error.HSScanTerminated,
@@ -114,6 +114,7 @@ fn ErrToCode(Err: anyerror) c_int
         error.SempyInvalid,
         error.SempyConvertArgs,
         error.SempyUnknown => return GRACIE_UNKNOWN_ERROR,
+
         else => unreachable,
     }
 }
@@ -326,14 +327,15 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
         try W.objectField(ExtractorDef.Name);
         try W.beginArray();
 
+        // Track which categories had matches ( allowing up to 128 )
+
+        var CatsWithMatches = std.bit_set.IntegerBitSet(128).initEmpty();
+
         //TODO(cjb): Handle multi matches within same category
 
         for (MatchList.items) |Match|
         {
-            try W.arrayElem();
-            try W.beginObject();
-
-            // Determine which category was matched.
+            // Determine which category was matched and mark it with "got a match".
 
             var CatIndex: usize = 0;
             for (ExtractorDef.CatBoxes) |Cat|
@@ -341,13 +343,14 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                 if ((Match.ID >= Cat.StartPatternID) and
                     (Match.ID < Cat.EndPatternID))
                 {
+                    CatsWithMatches.setValue(CatIndex, true);
                     break;
                 }
                 CatIndex += 1;
             }
             const Cat = ExtractorDef.CatBoxes[CatIndex];
 
-            switch (Cat.OnMatchType)
+            switch (Cat.OnMatchType) // NOTE(cjb): This be called something like "MatchResolveType"
             {
                 .Script =>
                 {
@@ -358,25 +361,69 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                         Text[Match.SO .. Match.EO],
                         SempyRunBuf);
 
+                    try W.arrayElem();
+                    try W.beginObject();
                     try W.objectField(Cat.Name);
                     try W.emitString(SempyRunBuf[0..nBytesCopied]);
                 },
 
                 .Conditional =>
                 {
-                    var CondItr = std.mem.tokenize(u8, Cat.Conditions, " ");
+                    // TODO(cjb): Parse this for realzies instead of hardcoded bs.
 
-                    debug.assert(std.mem.eql(u8, CondItr.next() orelse "", "TAG"));
+                    var CondItr = std.mem.tokenize(u8, Cat.Conditions, " ");
 
                     // NOTE(cjb): Right now all I care about is the truthiness. Other
                     //  fields will get integrated later. Probably...
 
-                    const Truthiness = CondItr.next() orelse "";
-                    debug.assert(std.mem.eql(u8, Truthiness, "TRUE") or
-                                 std.mem.eql(u8, Truthiness, "FALSE"));
+                    if (!std.mem.eql(u8, CondItr.next() orelse "", "TAG"))
+                    {
+                        return error.BadConditonStatment;
+                    }
 
+                    var Truthiness: bool = undefined;
+                    {
+                        const TruthinessTok = CondItr.next() orelse "";
+                        if (std.mem.eql(u8, TruthinessTok, "TRUE"))
+                        {
+                            Truthiness = true;
+                        }
+                        else if (std.mem.eql(u8, TruthinessTok, "FALSE"))
+                        {
+                            Truthiness = false;
+                        }
+                        else
+                        {
+                            return error.BadConditonStatment;
+                        }
+                    }
+
+                    if (!std.mem.eql(u8, CondItr.next() orelse "", "ON"))
+                    {
+                        return error.BadConditonStatment;
+                    }
+
+                    var CurrTok = CondItr.next() orelse "";
+
+                    // Bail if current token is 'NOT'
+
+                    if (std.mem.eql(u8, CurrTok, "NOT")) // TODO(cjb): Have categories convey
+                                                         //   this instead of embeding within the
+                                                         //   statment beacuse we are doing alot of
+                                                         //   work that we don't need to do.
+                    {
+                       continue;
+                    }
+
+                    if (!std.mem.eql(u8, CurrTok, "MATCH"))
+                    {
+                        return error.BadConditonStatment;
+                    }
+
+                    try W.arrayElem();
+                    try W.beginObject();
                     try W.objectField(Cat.Name);
-                    try W.emitString(Truthiness);
+                    try W.emitBool(Truthiness);
                 },
             }
 
@@ -390,7 +437,84 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
             try W.endObject(); // End this category's JSON blurb.
         }
 
-        // Resolve conditions here..
+        for (ExtractorDef.CatBoxes) |Cat, CatIndex|
+        {
+            if (CatsWithMatches.isSet(CatIndex))
+            {
+                continue;
+            }
+
+            switch (Cat.OnMatchType) // NOTE(cjb): This be called something like "MatchResolveType"
+            {
+                .Script =>
+                {
+                    continue; // Ignoring scripts for now, May be a use case here?
+                },
+
+                .Conditional =>
+                {
+                    // TODO(cjb): Parse this for realzies instead of hardcoded bs.
+
+                    var CondItr = std.mem.tokenize(u8, Cat.Conditions, " ");
+
+                    // NOTE(cjb): Right now all I care about is the truthiness. Other
+                    //  fields will get integrated later. Probably...
+
+                    if (!std.mem.eql(u8, CondItr.next() orelse "", "TAG"))
+                    {
+                        return error.BadConditonStatment;
+                    }
+
+                    var Truthiness: bool = undefined;
+                    {
+                        const TruthinessTok = CondItr.next() orelse "";
+                        if (std.mem.eql(u8, TruthinessTok, "TRUE"))
+                        {
+                            Truthiness = true;
+                        }
+                        else if (std.mem.eql(u8, TruthinessTok, "FALSE"))
+                        {
+                            Truthiness = false;
+                        }
+                        else
+                        {
+                            return error.BadConditonStatment;
+                        }
+                    }
+
+                    if (!std.mem.eql(u8, CondItr.next() orelse "", "ON"))
+                    {
+                        return error.BadConditonStatment;
+                    }
+
+                    // If token isn't NOT than bail.
+
+                    if (!std.mem.eql(u8, CondItr.next() orelse "", "NOT"))
+                    {
+                        continue;
+                    }
+
+                    if (!std.mem.eql(u8, CondItr.next() orelse "", "MATCH"))
+                    {
+                        return error.BadConditonStatment;
+                    }
+
+                    try W.arrayElem();
+                    try W.beginObject();
+                    try W.objectField(Cat.Name);
+                    try W.emitBool(Truthiness);
+                },
+            }
+
+            // Spit out match indicies ( mostly for web client's benifit )
+
+            try W.objectField("SO");
+            try W.emitNumber(0);
+            try W.objectField("EO");
+            try W.emitNumber(0);
+
+            try W.endObject(); // End this category's JSON blurb.
+        }
 
         try W.endArray(); // End extractor's list of JSON blurbs.
     }

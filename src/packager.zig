@@ -21,14 +21,6 @@ pub fn main() !void
     try CreateArtifact(Ally, ConfPathZ, ArtiPathZ);
 }
 
-// Extract/tag conditions
-//
-// Part 1 will focus on TAGGING conditions:
-//  * Encoded json str category will return t/f on match instead of calling sempy
-//  * A category can decide to:
-//      return true on match, false on match, or true on not match, or false
-//          on not match.
-
 pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
     ArtiPathZ: []const u8) !void
 {
