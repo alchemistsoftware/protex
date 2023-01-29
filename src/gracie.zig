@@ -25,7 +25,7 @@ const cat_box = struct
     Name: []u8,
     Conditions: []u8,
     MainPyModuleIndex: isize,
-    OnMatchType: common.arti_cat_on_match,
+    ResolvesWith: common.arti_cat_resolves_with,
     StartPatternID: c_uint,
     EndPatternID: c_uint,
 };
@@ -249,15 +249,15 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
             debug.assert(try R.readAll(@ptrCast([*]u8, &MainPyModuleIndex)
                     [0 .. @sizeOf(isize)]) == @sizeOf(isize));
 
-            var OnMatchType: common.arti_cat_on_match = undefined;
-            debug.assert(try R.readAll(@ptrCast([*]u8, &OnMatchType)
+            var ResolvesWith: common.arti_cat_resolves_with = undefined;
+            debug.assert(try R.readAll(@ptrCast([*]u8, &ResolvesWith)
                     [0 .. @sizeOf(c_int)]) == @sizeOf(c_int));
 
            ExtrDef.CatBoxes[CatIndex] = cat_box{
                .Name = Name,
                .Conditions = Conditions,
                .MainPyModuleIndex = MainPyModuleIndex,
-               .OnMatchType = OnMatchType,
+               .ResolvesWith = ResolvesWith,
                .StartPatternID = @intCast(c_uint, PatternSum - nPatternsForCategory),
                .EndPatternID = @intCast(c_uint, PatternSum),
            };
@@ -350,7 +350,7 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
             }
             const Cat = ExtractorDef.CatBoxes[CatIndex];
 
-            switch (Cat.OnMatchType) // NOTE(cjb): This be called something like "MatchResolveType"
+            switch (Cat.ResolvesWith)
             {
                 .Script =>
                 {
@@ -367,7 +367,7 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                     try W.emitString(SempyRunBuf[0..nBytesCopied]);
                 },
 
-                .Conditional =>
+                .Conditions =>
                 {
                     // TODO(cjb): Parse this for realzies instead of hardcoded bs.
 
@@ -444,14 +444,14 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                 continue;
             }
 
-            switch (Cat.OnMatchType) // NOTE(cjb): This be called something like "MatchResolveType"
+            switch (Cat.ResolvesWith)
             {
                 .Script =>
                 {
                     continue; // Ignoring scripts for now, May be a use case here?
                 },
 
-                .Conditional =>
+                .Conditions =>
                 {
                     // TODO(cjb): Parse this for realzies instead of hardcoded bs.
 

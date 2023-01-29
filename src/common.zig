@@ -2,10 +2,10 @@
 // Artifact header structs
 //
 
-pub const arti_cat_on_match = enum(c_int)
+pub const arti_cat_resolves_with = enum(c_int)
 {
     Script,
-    Conditional
+    Conditions
 };
 
 /// Artifact category header
@@ -77,7 +77,7 @@ pub const arti_header = packed struct
 //         | Conditions (nbytes)            |
 //         | N patterns (usize)             |
 //         | Main py module index (isize)   |
-//         | OnMatch type (c_int)           |
+//         | ResolvesWith (c_int)           |
 //         *--------------------------------*
 //
 //         *--------Category header---------*

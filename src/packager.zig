@@ -232,9 +232,9 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
         {
             const Patterns = Cat.Object.get("Patterns") orelse unreachable;
             const CatName = Cat.Object.get("Name") orelse unreachable;
-            const OnMatch = Cat.Object.get("OnMatch") orelse unreachable;
+            const ResolvesWith = Cat.Object.get("ResolvesWith") orelse unreachable;
 
-            if (std.mem.eql(u8, OnMatch.String, "script"))
+            if (std.mem.eql(u8, ResolvesWith.String, "script"))
             {
                 // Read module name and compute index of MainPyModule within PyModuleNames.
 
@@ -259,9 +259,9 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
                 try ArtiF.writeAll(CatName.String);
                 try ArtiF.writeAll(@ptrCast([*]const u8, &Patterns.Array.items.len)[0 .. @sizeOf(usize)]);
                 try ArtiF.writeAll(@ptrCast([*]const u8, &MainModuleIndex)[0 .. @sizeOf(isize)]);
-                try ArtiF.writeAll(@ptrCast([*]const u8, &common.arti_cat_on_match.Script)[0 .. @sizeOf(c_int)]);
+                try ArtiF.writeAll(@ptrCast([*]const u8, &common.arti_cat_resolves_with.Script)[0 .. @sizeOf(c_int)]);
             }
-            else if (std.mem.eql(u8, OnMatch.String, "conditional"))
+            else if (std.mem.eql(u8, ResolvesWith.String, "conditions"))
             {
                 const MainModuleIndex: isize = -1;
                 const Conditions = Cat.Object.get("Conditions") orelse unreachable;
@@ -275,12 +275,13 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
                 try ArtiF.writeAll(Conditions.String);
                 try ArtiF.writeAll(@ptrCast([*]const u8, &Patterns.Array.items.len)[0 .. @sizeOf(usize)]);
                 try ArtiF.writeAll(@ptrCast([*]const u8, &MainModuleIndex)[0 .. @sizeOf(isize)]);
-                try ArtiF.writeAll(@ptrCast([*]const u8, &common.arti_cat_on_match.Conditional)[0 .. @sizeOf(c_int)]);
+                try ArtiF.writeAll(@ptrCast([*]const u8, &common.arti_cat_resolves_with.Conditions)[0 .. @sizeOf(c_int)]);
             }
             else
             {
-                std.log.err("Category '{s}' has invalid OnMatch value", .{CatName.String});
-                return error.InvalidOnMatch;
+                std.log.err("Category '{s}' has invalid ResolvesWith: {s}",
+                    .{CatName.String, ResolvesWith.String});
+                return error.InvalidResolvesWith;
             }
 
         }

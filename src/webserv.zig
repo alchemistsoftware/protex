@@ -381,11 +381,8 @@ fn HandleHTTPRequest(Ally: allocator, Stream: *const net.Stream, WebDir: fs.Dir,
             };
             const ConfigStr = BodyItr.rest();
 
-            // Verify writing a valid json string.
-
-            if (std.json.validate(ConfigStr))
+            if (!std.json.validate(ConfigStr))
             {
-
                 try WriteBasicResponse(Stream, 400);
                 return handle_request_error.BadRequest;
             }
