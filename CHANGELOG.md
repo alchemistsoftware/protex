@@ -2,7 +2,12 @@
 
 This project adheres to [semver](https://semver.org/)
 
-## [0.1.1-alpha] - unreleased
+## [0.2.0-alpha] - unreleased
+### Added
+- Basic tagging conditions
+- Delete buttons for categories and extractors
+
+## [0.1.1-alpha] - 01-23-23
 ### Added
 - .gitignore
 - Regex highlighting for selected patterns

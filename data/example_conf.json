@@ -1,1 +1,36 @@
-{"PyIncludePath":"./plugins","ExtractorDefinitions":[{"Name":"salary","Country":"us","Language":"en","Categories":[{"Name":"hourly","MainPyModule":"hourly_salary.py","Patterns":["starting at \\$\\d\\d an hour"]}]},{"Name":"reqs","Country":"us","Language":"en","Categories":[{"Name":"hs_or_eqv","MainPyModule":"tagtrue.py","Patterns":["high school or equivalent \\(preferred\\)"]},{"Name":"work_auth","MainPyModule":"tagtrue.py","Patterns":["work authorization \\(required\\)"]}]}]}
+{
+    "ConfName": "webs_conf.json",
+    "PyIncludePath": "./plugins",
+    "ExtractorDefinitions": [
+        {
+            "Name": "salary",
+            "Country": "us",
+            "Language": "en",
+            "Categories": [
+                {
+                    "Name": "hourly",
+                    "ResolvesWith": "script",
+                    "MainPyModule": "hourly_salary.py",
+                    "Patterns": [
+                        "starting at \\$\\d\\d an hour"
+                    ]
+                }
+            ]
+        },
+        {
+            "Name": "reqs",
+            "Country": "us",
+            "Language": "en",
+            "Categories": [
+                {
+                    "Name": "hs_or_eqv",
+					"ResolvesWith" : "conditions",
+                    "Conditions": "TAG FALSE ON NOT MATCH",
+                    "Patterns": [
+                        "potatoes from idaho"
+                    ]
+                }
+            ]
+        }
+    ]
+}
