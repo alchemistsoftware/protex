@@ -1,25 +1,63 @@
+/*
+* Palette:
+* -------
+* #F8F9FA
+* #E9ECEF
+* #DEE2E6
+* #CED4DA
+* #ADB5BD
+* #6C757D
+* #495057
+* #343A40
+* #212529
+*/
+
 @font-face {
-    font-family: "Source Code Pro";
-    src: "./assets/static/SourceCodePro-Regular.ttf";
+    font-family: "FiraCode-Regular";
+    src: url("./assets/static/FiraCode-Regular.ttf");
+}
+@font-face {
+    font-family: "FiraCode-Retina";
+    src: url("./assets/static/FiraCode-Retina.ttf");
+}
+@font-face {
+    font-family: "FiraCode-Bold";
+    src: url("./assets/static/FiraCode-Bold.ttf");
+}
+@font-face {
+    font-family: "FiraCode-SemiBold";
+    src: url("./assets/static/FiraCode-SemiBold.ttf");
+}
+@font-face {
+    font-family: "FiraCode-Light";
+    src: url("./assets/static/FiraCode-Light.ttf");
 }
 *{
-    font-family: "Source Code Pro";
+    font-family: "FiraCode-Retina";
     padding: 0;
     margin: 0;
 }
 .noice{
-    background: white;
-    color: black;
+    font-family: "FiraCode-SemiBold";
+    background: #F8F9FA;
+    color: #212529;
 }
 .pattern-input[IsSelected=true]{
-    border: 2px dashed white;
+    outline: none;
+    border: 2px solid #212529;
 }
 #text-area{
     overflow: hidden;
 }
-body,textarea,input {
-    background-color: black;
-    color: white;
+
+body,textarea {
+    background-color: #DEE2E6;
+    color: #212529;
+}
+input,button{
+    font-family: "FiraCode-Regular";
+    background-color: #CED4DA
+    color: #212529;
 }
 .bottomright {
   position: absolute;

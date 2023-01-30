@@ -501,9 +501,26 @@ const ConfName = "webs_conf.json"; //TODO(cjb): Make this a texbox
 // Initialization
 //
 
-const PossibleTitles = ["now with sauce", "be the pattern", "gas, gas, gas",
-                        "wow those are some nice matches", "nice regex bruh", "plugin this py!"];
-document.title = PossibleTitles[Math.round(Math.random() * 100) % PossibleTitles.length];
+const PossibleTitles = ["Now with sauce! ", "Be the pattern. ", "gas, gas, gas, ",
+                        "Wow those are some nice matches. ", "Nice regex bruh. ",
+                        "Plugin this py! "];
+
+const TitleText = PossibleTitles[Math.round(Math.random() * 100) % PossibleTitles.length];
+
+let TextIndex = 0;
+
+function ScrollTitleText(): void {
+    document.title = TitleText.substring(
+        TextIndex, TitleText.length) + TitleText.substring(0, TextIndex);
+    TextIndex++;
+    if (TextIndex > TitleText.length)
+    {
+    TextIndex = 0;
+    }
+    window.setTimeout("ScrollTitleText()", 400);
+}
+
+ScrollTitleText();
 
 let S = {} as gracie_state;
 
