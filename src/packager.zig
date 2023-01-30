@@ -172,9 +172,9 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
                 try IDs.append(@intCast(c_uint, PatternIndex + nExistingPatterns));
             }
         }
-//
-// Compile and serialize hyperscan database
-//
+
+        // Compile and serialize hyperscan database
+
         var Database: ?*c.hs_database_t = null;
         var CompileError: ?*c.hs_compile_error_t = null;
         if (c.hs_compile_multi(PatternsZ.items.ptr, Flags.items.ptr,
@@ -183,7 +183,7 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
         {
             std.debug.print("{s}\n", .{CompileError.?.message});
             _ = c.hs_free_compile_error(CompileError);
-            unreachable;
+            return error.HSCompile;
         }
         defer
         {
