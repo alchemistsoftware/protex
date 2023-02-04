@@ -3,12 +3,9 @@
 This project adheres to [semver](https://semver.org/)
 
 ## [0.3.0-alpha] - unreleased
-### Added
-- Web title now scrolls to the left
-
 ### Changed
-- Web color palette and fonts
 - Packager now returns an error on failed hs compilation rather than a crash.
+- Web client is now an electron application
 
 ## [0.2.0-alpha] - 01-29-23
 ### Added
