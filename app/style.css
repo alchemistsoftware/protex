@@ -1,6 +1,7 @@
 /*
-* Palette:
+* Palettes:
 * -------
+* #1
 * #F8F9FA
 * #E9ECEF
 * #DEE2E6
@@ -10,6 +11,10 @@
 * #495057
 * #343A40
 * #212529
+*
+* #2
+* #FFFFFF
+* #000000
 */
 
 @font-face {
@@ -39,25 +44,23 @@
 }
 .noice{
     font-family: "FiraCode-SemiBold";
-    background: #F8F9FA;
-    color: #212529;
+    background: #FFFFFF;
+    color: #000000;
 }
 .pattern-input[IsSelected=true]{
     outline: none;
     border: 2px solid #212529;
 }
 #text-area{
-    overflow: hidden;
+/*    overflow: hidden; */
 }
 
 body,textarea {
-    background-color: #DEE2E6;
-    color: #212529;
+    background-color: #000000;
+    color: #FFFFFF;
 }
 input,button{
     font-family: "FiraCode-Regular";
-    background-color: #CED4DA
-    color: #212529;
 }
 .bottomright {
   position: absolute;

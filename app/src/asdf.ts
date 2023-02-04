@@ -178,28 +178,6 @@ function AddPattern(S: gracie_state, PatternsContainer: HTMLElement, Pattern: st
     PatternInput.addEventListener("input", () => UpdateSelectedPattern(PatternInput));
     PatternsContainer.appendChild(PatternInput);
 
-    const DocSectionSelect = document.createElement("select");
-    DocSectionSelect.className = "doc-section-select";
-    const DocSectionsContainer = TryGetElementByID("doc-sections-container");
-    const DocSectionNoneOption = document.createElement("option");
-    DocSectionNoneOption.text = "none";
-    DocSectionNoneOption.value = "0";
-    DocSectionSelect.add(DocSectionNoneOption);
-    let DocSectionIndex = 1;
-    for (const DocSectionItem of DocSectionsContainer.children)
-    {
-        const DocSectionNameInput = TryGetElementByClassName(
-            DocSectionItem, "doc-section-name-input", 0) as HTMLInputElement;
-        const DocSectionOption = document.createElement("option");
-        DocSectionOption.text = DocSectionNameInput.value;
-        DocSectionOption.value = DocSectionIndex.toString();
-        DocSectionSelect.add(DocSectionOption);
-        DocSectionIndex++;
-    }
-    PatternsContainer.appendChild(DocSectionSelect);
-    DocSectionSelect.selectedIndex = 0; // TODO(cjb): Pass target doc section.
-                                        //   ( useful when importing config )
-
     const RemovePatternButton = document.createElement("button");
     RemovePatternButton.innerText = "Remove";
     RemovePatternButton.onclick = () =>
@@ -214,52 +192,9 @@ function AddPattern(S: gracie_state, PatternsContainer: HTMLElement, Pattern: st
                 UpdateSelectedPattern(PatternInputs.item(0) as HTMLInputElement);
         }
         PatternInput.remove();
-        DocSectionSelect.remove();
         RemovePatternButton.remove();
     }
     PatternsContainer.appendChild(RemovePatternButton);
-}
-
-function AddDocSection(DocSectionName: string, Patterns: string[])
-{
-    const DocSectionsContainer = TryGetElementByID("doc-sections-container");
-
-    const DocSectionItem = document.createElement("div");
-    DocSectionItem.className = "doc-section-item";
-    DocSectionsContainer.appendChild(DocSectionItem);
-
-    const DocSectionNameInput = document.createElement("input");
-    DocSectionNameInput.className = "doc-section-name-input";
-    DocSectionNameInput.value = DocSectionName;
-    DocSectionItem.appendChild(DocSectionNameInput);
-
-    const RemoveDocSectionButton = document.createElement("button");
-    RemoveDocSectionButton.innerText = "Remove document section";
-    RemoveDocSectionButton.onclick = () =>
-    {
-        //TODO(cjb): LEFT OFF HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    };
-    DocSectionItem.appendChild(RemoveDocSectionButton);
-
-    const DocSectionSelectors = document.getElementsByClassName("doc-section-select");
-    for (const Selector of DocSectionSelectors)
-    {
-        const DocSectionOption = document.createElement("option");
-        DocSectionOption.text = DocSectionName;
-        DocSectionOption.value = DocSectionSelectors.length.toString();
-        (Selector as HTMLSelectElement).add(DocSectionOption);
-    }
-
-    const PatternsContainer = document.createElement("div");
-    PatternsContainer.className = "patterns-container";
-    DocSectionItem.appendChild(PatternsContainer);
-
-    const AddPatternButton = document.createElement("button");
-    AddPatternButton.innerText = "New pattern";
-    AddPatternButton.onclick = () => AddPattern(S, PatternsContainer, "");
-    PatternsContainer.appendChild(AddPatternButton);
-
-    for (const P of Patterns) AddPattern(S, PatternsContainer, P);
 }
 
 function AddExtr(S: gracie_state, ExtrName: string, Country: string, Language: string): HTMLElement
@@ -343,12 +278,6 @@ interface extr_def
     Country: string,
     Language: string,
     Categories: cat_def[],
-};
-
-interface doc_section_def
-{
-    Name: string,
-    Patterns: string[],
 };
 
 interface gracie_config
@@ -503,10 +432,10 @@ function GenJSONConfig(S: gracie_state): string
                 let Patterns: string[] = [];
                 const PatternsContainer = TryGetElementByClassName(
                     CatItem, "patterns-container", 0);
-                for (const PatternItem of PatternsContainer
+                for (const Elem of PatternsContainer
                      .getElementsByClassName("pattern-input"))
                 {
-                    Patterns.push((PatternItem as HTMLInputElement).value);
+                    Patterns.push((Elem as HTMLInputElement).value);
                 }
 
                 if (ResolvesWithSelect.value === "script")
@@ -543,31 +472,9 @@ function GenJSONConfig(S: gracie_state): string
         ExtrDefs.push(NewExtrDef);
     }
 
-    const DocSectionDefs: doc_section_def[] = [];
-    const DocSectionsContainer = TryGetElementByID("doc-sections-container");
-    for (const DocSectionItem of DocSectionsContainer.children)
-    {
-        const DocSectionNameInput = TryGetElementByClassName(
-            DocSectionItem, "doc-section-name-input", 0) as HTMLInputElement;
-
-        let Patterns: string[] = [];
-        const PatternsContainer = TryGetElementByClassName(
-            DocSectionItem, "patterns-container", 0);
-        for (const PatternItem of PatternsContainer
-             .getElementsByClassName("pattern-input"))
-        {
-            Patterns.push((PatternItem as HTMLInputElement).value);
-        }
-
-        const NewDocSectionDef: doc_section_def = {
-            Name: DocSectionNameInput.value,
-            Patterns: Patterns,
-        };
-        DocSectionDefs.push(NewDocSectionDef);
-    }
 
     return JSON.stringify({ConfName: ConfName, PyIncludePath: PyIncludePath,
-        DocSectionDefinitions: DocSectionDefs, ExtractorDefinitions: ExtrDefs});
+        ExtractorDefinitions: ExtrDefs});
 }
 
 function EscapeRegex(Regex: string): string
@@ -703,23 +610,6 @@ ImportConfigInput.type = "file";
 ImportConfigInput.onchange = (E) => ImportJSONConfig(S, E);
 AContainer.appendChild(ImportConfigInput);
 
-const NewDocSectionFieldsContainer = document.createElement("div");
-NewDocSectionFieldsContainer.id = "new-doc-section-fields-container";
-AContainer.appendChild(NewDocSectionFieldsContainer);
-
-const DocSectionNameInput = document.createElement("input");
-DocSectionNameInput.id = "doc-section-name-input";
-NewDocSectionFieldsContainer.appendChild(DocSectionNameInput);
-
-const AddDocSectionButton = document.createElement("button");
-AddDocSectionButton.innerText = "New document section";
-AddDocSectionButton.onclick = () =>
-{
-    AddDocSection(DocSectionNameInput.value, []);
-    DocSectionNameInput.value = "";
-};
-NewDocSectionFieldsContainer.appendChild(AddDocSectionButton);
-
 const NewExtrDefFieldsContainer = document.createElement("div");
 NewExtrDefFieldsContainer.id = "new-extr-def-fields-container";
 AContainer.appendChild(NewExtrDefFieldsContainer);
@@ -786,3 +676,4 @@ GenConfButton.onclick = () =>
 }
 AContainer.appendChild(GenConfButton);
 AContainer.appendChild(DEBUGDisplayConfig);
+
