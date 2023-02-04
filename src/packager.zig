@@ -4,6 +4,8 @@ const c = @cImport({
     @cInclude("hs.h");
 });
 
+// TODO(cjb): Since packager is now exposing an api return errors instead of hard crash.
+
 const array_list = std.ArrayList;
 
 pub fn main() !void
@@ -137,6 +139,12 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
         var IDs = array_list(c_uint).init(Ally);
         defer
         {
+            for (PatternsZ.items) |PatternZ|
+            {
+                var PatternLen: usize = 0;
+                while (PatternZ.?[PatternLen] != 0) { PatternLen += 1; }
+                Ally.free(PatternZ.?[0 .. PatternLen]);
+            }
             PatternsZ.deinit();
             Flags.deinit();
             IDs.deinit();
