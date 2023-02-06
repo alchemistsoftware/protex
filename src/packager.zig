@@ -4,6 +4,8 @@ const c = @cImport({
     @cInclude("hs.h");
 });
 
+// TODO(cjb): Since packager is now exposing an api return errors instead of hard crash.
+
 const array_list = std.ArrayList;
 
 pub fn main() !void
@@ -137,6 +139,12 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
         var IDs = array_list(c_uint).init(Ally);
         defer
         {
+            for (PatternsZ.items) |PatternZ|
+            {
+                var PatternLen: usize = 0;
+                while (PatternZ.?[PatternLen] != 0) { PatternLen += 1; }
+                Ally.free(PatternZ.?[0 .. PatternLen]);
+            }
             PatternsZ.deinit();
             Flags.deinit();
             IDs.deinit();
@@ -172,9 +180,9 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
                 try IDs.append(@intCast(c_uint, PatternIndex + nExistingPatterns));
             }
         }
-//
-// Compile and serialize hyperscan database
-//
+
+        // Compile and serialize hyperscan database
+
         var Database: ?*c.hs_database_t = null;
         var CompileError: ?*c.hs_compile_error_t = null;
         if (c.hs_compile_multi(PatternsZ.items.ptr, Flags.items.ptr,
@@ -183,7 +191,7 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
         {
             std.debug.print("{s}\n", .{CompileError.?.message});
             _ = c.hs_free_compile_error(CompileError);
-            unreachable;
+            return error.HSCompile;
         }
         defer
         {
