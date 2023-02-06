@@ -2,10 +2,13 @@
 
 This project adheres to [semver](https://semver.org/)
 
-## [0.3.0-alpha] - unreleased
+## [0.3.0-alpha] - 02-06-23
 ### Changed
 - Packager now returns an error on failed hs compilation rather than a crash.
-- Web client is now an electron application
+- Web client is now a standalone electron application
+
+### Removed
+- Web server
 
 ## [0.2.0-alpha] - 01-29-23
 ### Added
