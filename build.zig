@@ -61,25 +61,13 @@ pub fn build(B: *std.build.Builder) void {
     Packager.linkLibC();
     Packager.install();
 
-    // Webserver
-
-    const Server = B.addExecutable("webserv", "src/webserv.zig");
-    Server.setOutputDir("./bin");
-    Server.linkSystemLibrary("hs");
-    Server.addIncludePath("/usr/include/python3.11");
-    Server.addIncludePath("/usr/include/hs/");
-    Server.setBuildMode(Mode);
-    Server.install();
-    Server.linkLibC();
-    Server.linkLibrary(Gracie);
-
     // C API Check exe
 
-    const CAPICheck = B.addExecutable("capi_check", null);
+    const CAPICheck = B.addExecutable("capi_io", null);
     CAPICheck.setOutputDir("./bin");
     CAPICheck.setBuildMode(Mode);
     CAPICheck.install();
     CAPICheck.linkLibC();
     CAPICheck.linkLibrary(Gracie);
-    CAPICheck.addCSourceFiles(&.{"src/capi_check.c",}, &.{"-g",});
+    CAPICheck.addCSourceFiles(&.{"src/capi_io.c",}, &.{"-g",});
 }
