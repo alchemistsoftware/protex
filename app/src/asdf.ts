@@ -1,3 +1,9 @@
+interface py_include_path_and_entries
+{
+    PyIncludePath: string,
+    Entries: string[],
+}
+
 function AddEmptyCat(S: gracie_state, ExtrDefItem: HTMLElement): void
 {
     AddCat(S, ExtrDefItem, "", "", "", "", []);
@@ -286,6 +292,14 @@ interface gracie_config
     ExtractorDefinitions: extr_def[],
 };
 
+//  Give window an ElectronAPI property so I don't have to cast it as any.
+
+interface gracie_window extends Window
+{
+    ElectronAPI: any
+};
+
+const GracieWindow = window as unknown as gracie_window;
 
 function TryGetElementByClassName(ParentElem: Element, ClassName: string,
     Index: number): HTMLElement
@@ -338,67 +352,6 @@ function ImportJSONConfig(S: gracie_state, E: Event): void
                        Cat.Patterns);
         }
     });
-}
-
-interface py_include_path_and_entries
-{
-    PyIncludePath: string,
-    Entries: string[],
-};
-
-async function GETIncludePathAndEntries(): Promise<py_include_path_and_entries>
-{
-    return new Promise((Res, Rej) =>
-    {
-        const Req = new Request("/get-py-include-path");
-        fetch(Req)
-            .then(Res => (Res.body as ReadableStream))
-            .then(RS =>
-            {
-                const Reader = RS.getReader();
-                Reader.read().then(Stream =>
-                {
-                    const IncludePathAndEntriesJSONStr = new TextDecoder()
-                        .decode(Stream.value);
-                    Res(JSON.parse(IncludePathAndEntriesJSONStr));
-                });
-            });
-    });
-}
-
-async function TryPUTExtractorOut(Text: string, ConfName: string): Promise<any>
-{
-    return new Promise((Res, Rej) =>
-    {
-        let RequestJSON = {ConfName: ConfName, Text: Text};
-        const Enc = new TextEncoder();
-        const View = Enc.encode(JSON.stringify(RequestJSON));
-        const Req = new Request("/put-extractor-out", {method: "PUT", body: View});
-        fetch(Req)
-            .then(Res => (Res.body as ReadableStream))
-            .then(RS =>
-            {
-                const Reader = RS.getReader();
-                Reader.read().then(Stream =>
-                {
-                    const ResponseJSON = new TextDecoder().decode(Stream.value);
-                    Res(ResponseJSON);
-                });
-            });
-    });
-}
-
-function TryPUTConfig(ConfStr: string): void
-{
-    const Enc = new TextEncoder();
-    const View = Enc.encode(ConfStr);
-    const Req = new Request("/put-config", {method: "PUT", body: View});
-    fetch(Req)
-        .then(Res =>
-        {
-            if (Res.status !== 201)
-                throw new Error("Server didn't return 201");
-        });
 }
 
 function GenJSONConfig(S: gracie_state): string
@@ -504,34 +457,14 @@ const ConfName = "webs_conf.json"; //TODO(cjb): Make this a texbox
 // Initialization
 //
 
-const PossibleTitles = ["Now with sauce! ", "Be the pattern. ", "gas, gas, gas, ",
-                        "Wow those are some nice matches. ", "Nice regex bruh. ",
-                        "Plugin this py! "];
-
-const TitleText = PossibleTitles[Math.round(Math.random() * 100) % PossibleTitles.length];
-
-let TextIndex = 0;
-
-function ScrollTitleText(): void {
-    document.title = TitleText.substring(
-        TextIndex, TitleText.length) + TitleText.substring(0, TextIndex);
-    TextIndex++;
-    if (TextIndex > TitleText.length)
-    {
-    TextIndex = 0;
-    }
-    window.setTimeout("ScrollTitleText()", 400);
-}
-
-ScrollTitleText();
 
 let S = {} as gracie_state;
 
-const IncludePathAndEntries = GETIncludePathAndEntries()
-    .then((IncludePathAndEntries) =>
+GracieWindow.ElectronAPI.GetPyIncludePath()
+    .then((Result: py_include_path_and_entries) =>
 {
-    S.PyIncludePath = IncludePathAndEntries.PyIncludePath;
-    S.PyIncludePathEntries = IncludePathAndEntries.Entries;
+    S.PyIncludePath = Result.PyIncludePath;
+    S.PyIncludePathEntries = Result.Entries.slice(0);
 });
 
 // Root container to add dom elements to.
@@ -656,13 +589,14 @@ const RunExtractor = document.createElement("button");
 RunExtractor.innerText = "Run extractor";
 RunExtractor.onclick = () =>
 {
-    const JSONConfigStr = GenJSONConfig(S);
-    TryPUTConfig(JSONConfigStr);
-    TryPUTExtractorOut(TA.innerText, ConfName).then(ExtractorOut =>
+    const ConfigStr = GenJSONConfig(S);
+    GracieWindow.ElectronAPI.WriteConfig(ConfigStr).then(() =>
     {
-        // NOTE(cjb): Hack... will have something more formal.
-        //DEBUGDisplayConfig.innerText = ExtractorOut.toString();
-        console.log(ExtractorOut);
+        GracieWindow.ElectronAPI.RunExtractor(ConfName, TA.innerText)
+            .then((ExtractorOut: any) =>
+        {
+            console.log(ExtractorOut);
+        });
     });
 }
 AContainer.appendChild(RunExtractor);
