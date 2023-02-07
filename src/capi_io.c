@@ -16,8 +16,14 @@ int GracieExtract(void **GracieCtx, uint8_t *Text, uint32_t nTextBytes, uint8_t 
 #define GRACIE_INVALID -1 // Bad paramater was passed
 #define GRACIE_UNKNOWN_ERROR -2 // Unhandled internal error
 
-int main() //TODO(cjb): pass me artifact path...
+int main(int argc, char **argv)
 {
+    if (argc < 2)
+    {
+        fprintf(stdout, "Usage: %s <artifact_path>\n", argv[0]);
+        return -1;
+    }
+
     uint8_t Text[1024*5]; // 5kb text buffer for stdin
     uint32_t TextIndex = 0;
     char Ch;
@@ -31,7 +37,7 @@ int main() //TODO(cjb): pass me artifact path...
     }
 
     void *GracieCtx;
-    if (GracieInit(&GracieCtx, "./data/gracie.bin") != GRACIE_SUCCESS)
+    if (GracieInit(&GracieCtx, argv[1]) != GRACIE_SUCCESS)
     {
         puts("GracieInit failed :(");
         return -1;

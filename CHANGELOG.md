@@ -2,6 +2,8 @@
 
 This project adheres to [semver](https://semver.org/)
 
+## [0.3.1-alpha] - unreleased
+
 ## [0.3.0-alpha] - 02-06-23
 ### Changed
 - Packager now returns an error on failed hs compilation rather than a crash.

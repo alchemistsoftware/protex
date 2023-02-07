@@ -5,25 +5,38 @@ interface py_include_path_and_entries
     Entries: string[],
 }
 
-//TODO(cjb): Pass data dir as sys arg
+import process = require("node:process");
 
-const { app, BrowserWindow, ipcMain } = require("electron");
 const { spawn, spawnSync } = require("node:child_process");
+const electron = require("electron");
 const path = require("path");
 const fs = require("fs");
 
-ipcMain.handle("get-py-include-path", async (Event: any) =>
+//TODO(cjb): Read data from config file?
+
+let DataPath = "../data";
+let BinPath = "../bin";
+let PluginsPath = `${DataPath}/plugins`;
+
+// Tell main process how it should treat uncaught exceptions.
+
+process.on('uncaughtException', (Err: any) =>
+{
+    console.log(Err);
+});
+
+electron.ipcMain.handle("get-py-include-path", async (Event: any) =>
 {
     console.log("<<<\nget-py-include-path");
 
     let Result: py_include_path_and_entries = {
-        PyIncludePath: "plugins",
+        PyIncludePath: PluginsPath, // TODO(cjb): Hide this from user??
         Entries: [],
     };
 
     return new Promise((Resolve) =>
     {
-        fs.readdir("./data/plugins", (Err: Error, Files: string[]) =>
+        fs.readdir(PluginsPath, (Err: Error, Files: string[]) =>
         {
             if (Err) throw Err;
             Result.Entries = Files.slice(0);
@@ -36,13 +49,15 @@ ipcMain.handle("get-py-include-path", async (Event: any) =>
     });
 });
 
-ipcMain.handle("run-extractor", async (Event: any, ConfName: string, Text: string) =>
+electron.ipcMain.handle(
+    "run-extractor", async (Event: any, ConfName: string, Text: string) =>
 {
     return new Promise<any>((Resolve) =>
     {
         console.log("<<<\nrun-extractor");
 
-        const Packager = spawn("./bin/packager", ["./data/" + ConfName, "./data/gracie.bin"]);
+        const ArtiOutPath = path.parse(`${DataPath}/${ConfName}`).name + '.bin';
+        const Packager = spawn(`${BinPath}/packager`, [`${DataPath}/${ConfName}`, ArtiOutPath]);
         Packager.stdout.on("data", (Out: Buffer | string) =>
         {
             console.log(Out.toString());
@@ -60,8 +75,8 @@ ipcMain.handle("run-extractor", async (Event: any, ConfName: string, Text: strin
                 throw "Packager fail"
             }
 
-            const ExtractorProcess = spawnSync("./bin/capi_io", ["./data/gracie.bin"],
-                                                  {"input":Text});
+            const ExtractorProcess = spawnSync(
+                `${BinPath}/capi_io`, [ArtiOutPath], {"input":Text});
 
             if (ExtractorProcess.status !== 0)
             {
@@ -78,7 +93,7 @@ ipcMain.handle("run-extractor", async (Event: any, ConfName: string, Text: strin
     });
 });
 
-ipcMain.handle("write-config", async (Event: any, ConfigStr: string) =>
+electron.ipcMain.handle("write-config", async (Event: any, ConfigStr: string) =>
 {
     console.log("<<<\nwrite-config");
 
@@ -87,11 +102,10 @@ ipcMain.handle("write-config", async (Event: any, ConfigStr: string) =>
         const Config = JSON.parse(ConfigStr);
 
         const Bytes = new Uint8Array(Buffer.from(ConfigStr));
-        fs.writeFile("./data/" + Config.ConfName, Bytes, (Err: Error) =>
+        fs.writeFile(`${DataPath}/${Config.ConfName}`, Bytes, (Err: Error) =>
         {
             if (Err) throw Err;
-
-            console.log("Done writing ./data/" + Config.ConfName);
+            console.log(`Done writing ${DataPath}/${Config.ConfName}`);
             Resolve();
         });
     });
@@ -99,7 +113,7 @@ ipcMain.handle("write-config", async (Event: any, ConfigStr: string) =>
 
 const createWindow = () =>
 {
-    const win = new BrowserWindow({
+    const win = new electron.BrowserWindow({
         width: 800,
         height: 600,
         webPreferences: {
@@ -107,10 +121,10 @@ const createWindow = () =>
         }
     });
 
-    win.loadFile("../index.html");
+    win.loadFile(path.join(__dirname, "../index.html"));
 }
 
-app.whenReady().then(() =>
+electron.app.whenReady().then(() =>
 {
     createWindow();
 })
