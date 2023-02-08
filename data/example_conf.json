@@ -4,8 +4,6 @@
     "ExtractorDefinitions": [
         {
             "Name": "salary",
-            "Country": "us",
-            "Language": "en",
             "Categories": [
                 {
                     "Name": "hourly",
@@ -19,8 +17,6 @@
         },
         {
             "Name": "reqs",
-            "Country": "us",
-            "Language": "en",
             "Categories": [
                 {
                     "Name": "hs_or_eqv",

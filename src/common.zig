@@ -63,8 +63,6 @@ pub const arti_header = packed struct
 //     | N database bytes (usize)       |
 //     | N categories (usize)           |
 //     |----Extraction context data-----|
-//     | Country (2 bytes)              |
-//     | Language (2 bytes)             |
 //     | Extractor name (nBytes)        |
 //     | HS database (nbytes)           |
 //     *--------------------------------*

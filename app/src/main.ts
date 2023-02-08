@@ -16,7 +16,7 @@ const fs = require("fs");
 
 let DataPath = "../data";
 let BinPath = "../bin";
-let PluginsPath = `${DataPath}/plugins`;
+let ConfRelPluginsPath = "plugins";
 
 // Tell main process how it should treat uncaught exceptions.
 
@@ -30,13 +30,13 @@ electron.ipcMain.handle("get-py-include-path", async (Event: any) =>
     console.log("<<<\nget-py-include-path");
 
     let Result: py_include_path_and_entries = {
-        PyIncludePath: PluginsPath, // TODO(cjb): Hide this from user??
+        PyIncludePath: ConfRelPluginsPath, // TODO(cjb): Hide this from user??
         Entries: [],
     };
 
     return new Promise((Resolve) =>
     {
-        fs.readdir(PluginsPath, (Err: Error, Files: string[]) =>
+        fs.readdir(`${DataPath}/${ConfRelPluginsPath}`, (Err: Error, Files: string[]) =>
         {
             if (Err) throw Err;
             Result.Entries = Files.slice(0);

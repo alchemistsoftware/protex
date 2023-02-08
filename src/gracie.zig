@@ -33,8 +33,6 @@ const cat_box = struct
 const extractor_def = struct
 {
     Name: []u8,
-    Country: [2]u8,
-    Language: [2]u8,
 
     CatBoxes: []cat_box,
     Database: ?*c.hs_database_t,
@@ -195,9 +193,6 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
         const DefHeader = try R.readStruct(common.arti_def_header);
         var ExtrDef: extractor_def = undefined;
 
-        // Read country, language, and name
-        debug.assert(try R.readAll(&ExtrDef.Country) == 2);
-        debug.assert(try R.readAll(&ExtrDef.Language) == 2);
         ExtrDef.Name = try Self.Ally.alloc(u8, DefHeader.nExtractorNameBytes);
         debug.assert(try R.readAll(ExtrDef.Name) == DefHeader.nExtractorNameBytes);
 

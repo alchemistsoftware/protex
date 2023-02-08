@@ -3,6 +3,14 @@
 This project adheres to [semver](https://semver.org/)
 
 ## [0.3.1-alpha] - unreleased
+### Removed
+- Country/Language inputs within config, and refrences within extractor and packager.
+
+### Changed
+- Don't let index cache renderer.js
+
+### Fixed
+- User provided text is now properly rendering after clicking away.
 
 ## [0.3.0-alpha] - 02-06-23
 ### Changed
