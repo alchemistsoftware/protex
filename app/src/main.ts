@@ -78,13 +78,13 @@ electron.ipcMain.handle(
             const ExtractorProcess = spawnSync(
                 `${BinPath}/capi_io`, [ArtiOutPath], {"input":Text});
 
+            console.log(">>>\n");
+            console.log(ExtractorProcess.stderr.toString());
+            console.log(ExtractorProcess.stdout.toString());
             if (ExtractorProcess.status !== 0)
             {
                 throw "Extractor fail";
             }
-            console.log(">>>\n");
-            console.log(ExtractorProcess.stderr.toString());
-            console.log(ExtractorProcess.stdout.toString());
 
             Resolve(ExtractorProcess.stdout.toString());
         });
@@ -114,6 +114,7 @@ electron.ipcMain.handle("write-config", async (Event: any, ConfigStr: string) =>
 const createWindow = () =>
 {
     const win = new electron.BrowserWindow({
+        autoHideMenuBar: true,
         width: 800,
         height: 600,
         webPreferences: {
