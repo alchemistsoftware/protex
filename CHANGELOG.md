@@ -5,13 +5,15 @@ This project adheres to [semver](https://semver.org/)
 ## [0.4.0-alpha] - unreleased
 ### Fixed
 - Text tabs/new-lines are now properly displayed.
+- Out of bounds index when using UNTIL OFFSET within a conditional statement.
+- App writing artifacts to wrong dir.
 
 ### Changed
 - Text scrollbars are now hidden
 
 ### Added
-- Pressing '~' during conditional statment editing now prompts an auto complete for the pattern
-    to include within the statment.
+- Pressing '~' during conditional statement editing now prompts an auto complete for the pattern
+    to include within the statement.
 
 ## [0.3.1-alpha] - 02-08-23
 ### Removed

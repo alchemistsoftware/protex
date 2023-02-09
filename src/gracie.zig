@@ -451,15 +451,16 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                         }
 
                         var Offset = try std.fmt.parseUnsigned(c_ulonglong, CurrTok, 10);
-                        if (Offset + Match.EO > Text.len)
+                        var GoodEO = Offset + Match.EO;
+                        if (GoodEO > Text.len)
                         {
-                            Offset = Text.len;
+                            GoodEO = Text.len;
                         }
 
                         try W.arrayElem();
                         try W.beginObject();
                         try W.objectField(Cat.Name);
-                        try W.emitString(Text[Match.SO .. Match.EO + Offset]);
+                        try W.emitString(Text[Match.SO .. GoodEO]);
 
                         // Spit out match indicies ( mostly for web client's benifit )
 

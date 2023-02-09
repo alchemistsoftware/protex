@@ -56,7 +56,8 @@ electron.ipcMain.handle(
     {
         console.log("<<<\nrun-extractor");
 
-        const ArtiOutPath = path.parse(`${DataPath}/${ConfName}`).name + '.bin';
+        const ArtiOutPath = `${DataPath}/` + path.parse(ConfName).name + '.bin';
+        console.log(ArtiOutPath);
         const Packager = spawn(`${BinPath}/packager`, [`${DataPath}/${ConfName}`, ArtiOutPath]);
         Packager.stdout.on("data", (Out: Buffer | string) =>
         {
