@@ -1,16 +1,20 @@
 {
-  "main":"./src/main.js",
+  "main": "./src/main.js",
+  "name":"gracie",
+  "description":"programmable text classifier and extractor",
+  "version": "0.3.1-alpha",
   "scripts": {
+    "compile": "./node_modules/.bin/tsc -b",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make"
   },
   "devDependencies": {
-    "@electron-forge/cli": "^6.0.4",
-    "@electron-forge/maker-deb": "^6.0.4",
-    "@electron-forge/maker-rpm": "^6.0.4",
-    "@electron-forge/maker-squirrel": "^6.0.4",
-    "@electron-forge/maker-zip": "^6.0.4",
+    "@electron-forge/cli": "^6.0.5",
+    "@electron-forge/maker-deb": "^6.0.5",
+    "@electron-forge/maker-rpm": "^6.0.5",
+    "@electron-forge/maker-squirrel": "^6.0.5",
+    "@electron-forge/maker-zip": "^6.0.5",
     "electron": "^22.2.0",
     "typescript": "^4.9.4"
   },

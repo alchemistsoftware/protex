@@ -213,26 +213,13 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
 // Write extractor definition header and it's data. Then proceed to write the category
 // headers and their data as well.
 //
-        // Snag country, langauge and extractor name.
-        const Country = Extractor.Object.get("Country") orelse unreachable;
-        const Language = Extractor.Object.get("Language") orelse unreachable;
         const ExtractorName = Extractor.Object.get("Name") orelse unreachable;
-
-        // Verify country and langauge are digraphs
-        if ((Country.String.len != 2) or
-            (Language.String.len != 2))
-        {
-            unreachable;
-        }
-
         const DefHeader = common.arti_def_header{
             .nExtractorNameBytes = ExtractorName.String.len,
             .DatabaseSize = nSerializedDBBytes,
             .nCategories = Categories.Array.items.len,
         };
         try ArtiF.writer().writeStruct(DefHeader);
-        try ArtiF.writeAll(Country.String);
-        try ArtiF.writeAll(Language.String);
         try ArtiF.writeAll(ExtractorName.String);
         try ArtiF.writeAll(SerializedDBBytes.?[0 .. nSerializedDBBytes]);
 

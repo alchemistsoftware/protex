@@ -33,8 +33,6 @@ const cat_box = struct
 const extractor_def = struct
 {
     Name: []u8,
-    Country: [2]u8,
-    Language: [2]u8,
 
     CatBoxes: []cat_box,
     Database: ?*c.hs_database_t,
@@ -195,9 +193,6 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
         const DefHeader = try R.readStruct(common.arti_def_header);
         var ExtrDef: extractor_def = undefined;
 
-        // Read country, language, and name
-        debug.assert(try R.readAll(&ExtrDef.Country) == 2);
-        debug.assert(try R.readAll(&ExtrDef.Language) == 2);
         ExtrDef.Name = try Self.Ally.alloc(u8, DefHeader.nExtractorNameBytes);
         debug.assert(try R.readAll(ExtrDef.Name) == DefHeader.nExtractorNameBytes);
 
@@ -267,7 +262,7 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
     }
 
     // Initialize extractor scratch buffer
-    Self.FBackBuf = try Ally.alloc(u8, 1024*20);
+    Self.FBackBuf = try Ally.alloc(u8, 1024*1024);
 
     return Self;
 }
@@ -306,7 +301,7 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
     // Allocate fixed buffers for stream & sempy output.
 
     var SempyRunBuf = try FBAlly.allocator().alloc(u8, 1024*1);
-    var ReturnBuf = try FBAlly.allocator().alloc(u8, 1024*2);
+    var ReturnBuf = try FBAlly.allocator().alloc(u8, 1024*10);
 
     // Initialize an output stream for our JSON writer.
 
@@ -365,74 +360,120 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                     try W.beginObject();
                     try W.objectField(Cat.Name);
                     try W.emitString(SempyRunBuf[0..nBytesCopied]);
+
+                    // Spit out match indicies ( mostly for web client's benifit )
+
+                    try W.objectField("SO");
+                    try W.emitNumber(Match.SO);
+                    try W.objectField("EO");
+                    try W.emitNumber(Match.EO);
                 },
 
                 .Conditions =>
                 {
-                    // TODO(cjb): Parse this for realzies instead of hardcoded bs.
+                    // TODO(cjb): Actually parse this?
 
                     var CondItr = std.mem.tokenize(u8, Cat.Conditions, " ");
-
-                    // NOTE(cjb): Right now all I care about is the truthiness. Other
-                    //  fields will get integrated later. Probably...
-
-                    if (!std.mem.eql(u8, CondItr.next() orelse "", "TAG"))
+                    var CurrTok = CondItr.next() orelse "";
+                    if (std.mem.eql(u8, CurrTok, "TAG"))
                     {
-                        return error.BadConditonStatment;
-                    }
+                        var Truthiness: bool = undefined;
+                        {
+                            const TruthinessTok = CondItr.next() orelse "";
+                            if (std.mem.eql(u8, TruthinessTok, "TRUE"))
+                            {
+                                Truthiness = true;
+                            }
+                            else if (std.mem.eql(u8, TruthinessTok, "FALSE"))
+                            {
+                                Truthiness = false;
+                            }
+                            else
+                            {
+                                return error.BadConditonStatment;
+                            }
+                        }
 
-                    var Truthiness: bool = undefined;
-                    {
-                        const TruthinessTok = CondItr.next() orelse "";
-                        if (std.mem.eql(u8, TruthinessTok, "TRUE"))
-                        {
-                            Truthiness = true;
-                        }
-                        else if (std.mem.eql(u8, TruthinessTok, "FALSE"))
-                        {
-                            Truthiness = false;
-                        }
-                        else
+                        if (!std.mem.eql(u8, CondItr.next() orelse "", "ON"))
                         {
                             return error.BadConditonStatment;
                         }
-                    }
 
-                    if (!std.mem.eql(u8, CondItr.next() orelse "", "ON"))
+                        CurrTok = CondItr.next() orelse "";
+
+                        // Bail if current token is 'NOT'
+
+                        if (std.mem.eql(u8, CurrTok, "NOT")) // TODO(cjb): Have categories convey
+                                                             //   this instead of embeding within the
+                                                             //   statment beacuse we are doing alot of
+                                                             //   work that we don't need to do.
+                        {
+                           continue;
+                        }
+
+                        if (!std.mem.eql(u8, CurrTok, "MATCH"))
+                        {
+                            return error.BadConditonStatment;
+                        }
+
+                        try W.arrayElem(); // NOTE(cjb): these are here because of the stupid
+                                           // continue a few lines above this comment.
+                        try W.beginObject();
+                        try W.objectField(Cat.Name);
+                        try W.emitBool(Truthiness);
+
+                        // Spit out match indicies ( mostly for web client's benifit )
+
+                        try W.objectField("SO");
+                        try W.emitNumber(Match.SO);
+                        try W.objectField("EO");
+                        try W.emitNumber(Match.EO);
+                    }
+                    else if (std.mem.eql(u8, CurrTok, "EXTRACT"))
+                    {
+                        if (!std.mem.eql(u8, CondItr.next() orelse "", "UNTIL"))
+                        {
+                            return error.BadConditonStatment;
+                        }
+                        if (!std.mem.eql(u8, CondItr.next() orelse "", "OFFSET"))
+                        {
+                            return error.BadConditonStatment;
+                        }
+                        if (!std.mem.eql(u8, CondItr.next() orelse "", "="))
+                        {
+                            return error.BadConditonStatment;
+                        }
+
+                        CurrTok = CondItr.next() orelse "";
+                        if (std.mem.eql(u8, CurrTok, ""))
+                        {
+                            return error.BadConditonStatment;
+                        }
+
+                        var Offset = try std.fmt.parseUnsigned(c_ulonglong, CurrTok, 10);
+                        if (Offset + Match.EO > Text.len)
+                        {
+                            Offset = Text.len;
+                        }
+
+                        try W.arrayElem();
+                        try W.beginObject();
+                        try W.objectField(Cat.Name);
+                        try W.emitString(Text[Match.SO .. Match.EO + Offset]);
+
+                        // Spit out match indicies ( mostly for web client's benifit )
+
+                        try W.objectField("SO");
+                        try W.emitNumber(Match.SO);
+                        try W.objectField("EO");
+                        try W.emitNumber(Match.EO + Offset);
+                    }
+                    else
                     {
                         return error.BadConditonStatment;
                     }
-
-                    var CurrTok = CondItr.next() orelse "";
-
-                    // Bail if current token is 'NOT'
-
-                    if (std.mem.eql(u8, CurrTok, "NOT")) // TODO(cjb): Have categories convey
-                                                         //   this instead of embeding within the
-                                                         //   statment beacuse we are doing alot of
-                                                         //   work that we don't need to do.
-                    {
-                       continue;
-                    }
-
-                    if (!std.mem.eql(u8, CurrTok, "MATCH"))
-                    {
-                        return error.BadConditonStatment;
-                    }
-
-                    try W.arrayElem();
-                    try W.beginObject();
-                    try W.objectField(Cat.Name);
-                    try W.emitBool(Truthiness);
                 },
             }
-
-            // Spit out match indicies ( mostly for web client's benifit )
-
-            try W.objectField("SO");
-            try W.emitNumber(Match.SO);
-            try W.objectField("EO");
-            try W.emitNumber(Match.EO);
 
             try W.endObject(); // End this category's JSON blurb.
         }
@@ -453,56 +494,58 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
 
                 .Conditions =>
                 {
-                    // TODO(cjb): Parse this for realzies instead of hardcoded bs.
-
                     var CondItr = std.mem.tokenize(u8, Cat.Conditions, " ");
+                    var CurrTok = CondItr.next() orelse "";
 
-                    // NOTE(cjb): Right now all I care about is the truthiness. Other
-                    //  fields will get integrated later. Probably...
-
-                    if (!std.mem.eql(u8, CondItr.next() orelse "", "TAG"))
+                    if (std.mem.eql(u8, CurrTok, "TAG"))
                     {
-                        return error.BadConditonStatment;
-                    }
+                        var Truthiness: bool = undefined;
+                        {
+                            const TruthinessTok = CondItr.next() orelse "";
+                            if (std.mem.eql(u8, TruthinessTok, "TRUE"))
+                            {
+                                Truthiness = true;
+                            }
+                            else if (std.mem.eql(u8, TruthinessTok, "FALSE"))
+                            {
+                                Truthiness = false;
+                            }
+                            else
+                            {
+                                return error.BadConditonStatment;
+                            }
+                        }
 
-                    var Truthiness: bool = undefined;
-                    {
-                        const TruthinessTok = CondItr.next() orelse "";
-                        if (std.mem.eql(u8, TruthinessTok, "TRUE"))
-                        {
-                            Truthiness = true;
-                        }
-                        else if (std.mem.eql(u8, TruthinessTok, "FALSE"))
-                        {
-                            Truthiness = false;
-                        }
-                        else
+                        if (!std.mem.eql(u8, CondItr.next() orelse "", "ON"))
                         {
                             return error.BadConditonStatment;
                         }
-                    }
 
-                    if (!std.mem.eql(u8, CondItr.next() orelse "", "ON"))
+                        // If token isn't NOT than bail.
+
+                        if (!std.mem.eql(u8, CondItr.next() orelse "", "NOT"))
+                        {
+                            continue;
+                        }
+
+                        if (!std.mem.eql(u8, CondItr.next() orelse "", "MATCH"))
+                        {
+                            return error.BadConditonStatment;
+                        }
+
+                        try W.arrayElem();
+                        try W.beginObject();
+                        try W.objectField(Cat.Name);
+                        try W.emitBool(Truthiness);
+                    }
+                    else if (std.mem.eql(u8, CurrTok, "EXTRACT"))
+                    {
+                        continue; // Ignore extract condition because there is nothing to extract.
+                    }
+                    else
                     {
                         return error.BadConditonStatment;
                     }
-
-                    // If token isn't NOT than bail.
-
-                    if (!std.mem.eql(u8, CondItr.next() orelse "", "NOT"))
-                    {
-                        continue;
-                    }
-
-                    if (!std.mem.eql(u8, CondItr.next() orelse "", "MATCH"))
-                    {
-                        return error.BadConditonStatment;
-                    }
-
-                    try W.arrayElem();
-                    try W.beginObject();
-                    try W.objectField(Cat.Name);
-                    try W.emitBool(Truthiness);
                 },
             }
 
