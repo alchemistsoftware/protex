@@ -2,7 +2,18 @@
 
 This project adheres to [semver](https://semver.org/)
 
-## [0.3.1-alpha] - unreleased
+## [0.4.0-alpha] - unreleased
+### Fixed
+- Text tabs/new-lines are now properly displayed.
+
+### Changed
+- Text scrollbars are now hidden
+
+### Added
+- Pressing '~' during conditional statment editing now prompts an auto complete for the pattern
+    to include within the statment.
+
+## [0.3.1-alpha] - 02-08-23
 ### Removed
 - Country/Language inputs within config, and refrences within extractor and packager.
 

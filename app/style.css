@@ -51,8 +51,16 @@
     outline: none;
     border: 2px solid #212529;
 }
-#text-area,#span-text{
+#text-area,#pre-text{
+    white-space: pre-wrap;
     overflow-y: scroll;
+    border: none;
+    resize: none;
+    width: 100%;
+    height: 100%;
+}
+pre::-webkit-scrollbar,textarea::-webkit-scrollbar {
+  display: none;
 }
 
 body,textarea {

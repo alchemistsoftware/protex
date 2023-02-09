@@ -76,6 +76,53 @@ function AddCat(S: gracie_state, ExtrDefItem: HTMLElement, Name: string, Resolve
     const ConditionsInput = document.createElement("input");
     ConditionsInput.className = "conditions-input";
     ConditionsInput.value = Conditions;
+    ConditionsInput.addEventListener("keydown", (E: Event) =>
+    {
+        const InputE = (E as KeyboardEvent);
+        if (InputE.key === '~')
+        {
+            E.preventDefault();
+
+            const AutoCompleteMenu = TryGetElementByID("auto-complete-menu");
+            AutoCompleteMenu.innerHTML = "";
+            const PatternsContainer = TryGetElementByClassName(
+                CategoryFieldsItem, "patterns-container", 0);
+            let EntryIndex = 0;
+            for (const Elem of PatternsContainer
+                 .getElementsByClassName("pattern-input"))
+            {
+                const AutoCompleteEntry = document.createElement("li");
+                AutoCompleteEntry.setAttribute("tabIndex", "0");
+                AutoCompleteEntry.style.display = "inline-block";
+                AutoCompleteEntry.style.padding = "1px 5px"
+                AutoCompleteEntry.innerText = (Elem as HTMLInputElement).value;
+                AutoCompleteEntry.value = EntryIndex;
+                EntryIndex += 1;
+                AutoCompleteEntry.addEventListener("keyup", (E: Event) =>
+                {
+                    E.preventDefault();
+                    if ((E as KeyboardEvent).key === "Enter")
+                    {
+                        const OptSelectionStart = ConditionsInput.selectionStart;
+                        if (OptSelectionStart !== null)
+                        {
+                            const SelectionStart = OptSelectionStart as number;
+                            ConditionsInput.value = ConditionsInput.value.slice(0, SelectionStart) +
+                                `#${AutoCompleteEntry.value}` +
+                                ConditionsInput.value.slice(SelectionStart);
+                        }
+                        AutoCompleteMenu.innerHTML = "";
+                        ConditionsInput.focus();
+                    }
+                });
+                AutoCompleteMenu.appendChild(AutoCompleteEntry);
+            }
+            if (EntryIndex > 0)
+            {
+                (AutoCompleteMenu.children[0] as HTMLElement).focus();
+            }
+        }
+    });
     CategoryFieldsItem.appendChild(ConditionsInput);
 
     function UpdateResolvesWith(): void
@@ -157,21 +204,29 @@ function UpdateSelectedPattern(TargetPatternInput: HTMLInputElement): void
     }
     TargetPatternInput.setAttribute("IsSelected", "true");
 
-    // Also update span text.
     const TextAreaText = (TryGetElementByID("text-area") as HTMLTextAreaElement).value;
-    const SpanText = TryGetElementByID("span-text");
-
+    const PreText = TryGetElementByID("pre-text");
+    let SpanifiedText = "";
+    let Offset = 0;
     const Re = RegExp(TargetPatternInput.value, "gi"); //TODO(cjb): What flags do I pass here?
     let Matches: RegExpExecArray | null;
     while ((Matches = Re.exec(TextAreaText)) !== null)
     {
         const Match = Matches[0];
-        SpanText.innerHTML = TextAreaText.slice(0, Re.lastIndex - Match.length) +
-                            `<span class="noice">` +
-                            TextAreaText.slice(Re.lastIndex - Match.length, Re.lastIndex) +
-                            `</span>` + TextAreaText.slice(Re.lastIndex);
-        break; // TODO(cjb): Multi matches
+        const SO = Re.lastIndex - Match.length;
+        const EO = Re.lastIndex;
+        const LHS = TextAreaText.substring(Offset, SO);
+        const RHS = '<span class="noice">' + TextAreaText.substring(SO, EO) + '</span>';
+
+        console.log(LHS);
+        console.log(RHS);
+
+        SpanifiedText += LHS + RHS;
+        Offset = EO;
+        break;
     }
+	SpanifiedText += TextAreaText.substring(Offset);
+    PreText.innerHTML = SpanifiedText;
 }
 
 function AddPattern(S: gracie_state, PatternsContainer: HTMLElement, Pattern: string): void
@@ -437,7 +492,6 @@ const ConfName = "webs_conf.json"; //TODO(cjb): Make this a texbox
 // Initialization
 //
 
-
 let S = {} as gracie_state;
 
 GracieWindow.ElectronAPI.GetPyIncludePath()
@@ -456,13 +510,10 @@ if (AContainer == null)
 
 const ABox = document.createElement("div");
 ABox.style.width = "95vw";
-ABox.style.height = "40vh";
+ABox.style.height = "45vh";
 ABox.style.maxWidth = "95vw";
-ABox.style.maxHeight = "40vh";
+ABox.style.maxHeight = "45vh";
 ABox.style.margin = "10px";
-ABox.style.display = "inline-block";
-//ABox.style.border = "1px solid red";
-ABox.style.overflow = "hidden";
 AContainer.appendChild(ABox);
 
 // Document's text area
@@ -470,23 +521,17 @@ const DEBUGText = "Prep Cooks/Cooks Starting at $25 an Hour Qualifications\n    
 const TA = document.createElement("textarea");
 TA.id = "text-area"; // NOTE(cjb): also working id...
 TA.value = DEBUGText;
-TA.style.border = "none";
-TA.style.resize = "none";
-TA.style.width = "100%";
-TA.style.height = "100%";
 TA.style.display = "none";
 TA.addEventListener("blur", () => //TODO(cjb): fix me... <span> wrapping for multiple matches
 {
     TA.style.display = "none";
-    SpanText.style.display = "inline-block";
+    PreText.style.display = "inline-block";
 
-    const InnerText = TA.value;
-    SpanText.innerHTML = InnerText;
-
-    SpanText.innerHTML = InnerText.slice(0, TA.selectionStart) +
+    const TextAreaText = TA.value;
+    PreText.innerHTML = TextAreaText.slice(0, TA.selectionStart) +
                         `<span class="noice">` +
-                        InnerText.slice(TA.selectionStart, TA.selectionEnd) +
-                        `</span>` + InnerText.slice(TA.selectionEnd);
+                        TextAreaText.slice(TA.selectionStart, TA.selectionEnd) +
+                        `</span>` + TextAreaText.slice(TA.selectionEnd);
 
     // NOTE(cjb): There should allways be a last selected pattern input, unless
     // there are no inputs.
@@ -497,25 +542,21 @@ TA.addEventListener("blur", () => //TODO(cjb): fix me... <span> wrapping for mul
     const LSPI = (OptLSPI as HTMLInputElement);
     LSPI.setAttribute("SO", `${TA.selectionStart}`);
     LSPI.setAttribute("EO", `${TA.selectionEnd}`);
-    LSPI.value = Regexify(InnerText.slice(TA.selectionStart, TA.selectionEnd));
+    LSPI.value = Regexify(TextAreaText.slice(TA.selectionStart, TA.selectionEnd));
 });
 ABox.appendChild(TA);
 
-const SpanText = document.createElement("p");
-SpanText.id = "span-text"; // working id name...
-SpanText.innerText = DEBUGText;
-SpanText.style.border = "none";
-SpanText.style.resize = "none";
-SpanText.style.width = "100%";
-SpanText.style.height = "100%";
-SpanText.onclick = () =>
+const PreText = document.createElement("pre");
+PreText.id = "pre-text"; // working id name...
+PreText.innerHTML = DEBUGText;
+PreText.onclick = () =>
 {
     // Toggle TA selection
-    SpanText.style.display = "none";
+    PreText.style.display = "none";
     TA.style.display = "inline-block";
     TA.focus();
 }
-ABox.appendChild(SpanText);
+ABox.appendChild(PreText);
 
 // Import existing configuration input
 const ImportConfigLabel = document.createElement("label");
@@ -584,4 +625,8 @@ GenConfButton.onclick = () =>
 }
 AContainer.appendChild(GenConfButton);
 AContainer.appendChild(DEBUGDisplayConfig);
+
+const AutoCompleteMenu = document.createElement("menu");
+AutoCompleteMenu.id = "auto-complete-menu";
+AContainer.appendChild(AutoCompleteMenu);
 
