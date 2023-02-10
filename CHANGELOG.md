@@ -3,10 +3,17 @@
 This project adheres to [semver](https://semver.org/)
 
 ## [0.4.0-alpha] - unreleased
+### Added
+- Extract/Tag conditions can now specify specific patterns.
+
 ### Fixed
 - Text tabs/new-lines are now properly displayed.
 - Out of bounds index when using UNTIL OFFSET within a conditional statement.
 - App writing artifacts to wrong dir.
+
+### Removed
+- Generate config button and text that would appear because configurations are now written by main
+    thread instead of a web server.
 
 ### Changed
 - Text scrollbars are now hidden

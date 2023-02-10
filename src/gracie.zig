@@ -411,7 +411,17 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                            continue;
                         }
 
-                        if (!std.mem.eql(u8, CurrTok, "MATCH"))
+                        if (CurrTok.len > 1 and CurrTok[0] == '#')
+                        {
+                            // If we can find this match in matchlist than continue
+                            const TargetPatternID =
+                                try std.fmt.parseUnsigned(c_ulonglong, CurrTok[1 .. ], 10);
+                            if (TargetPatternID + Cat.StartPatternID != Match.ID)
+                            {
+                                continue;
+                            }
+                        }
+                        else if (!std.mem.eql(u8, CurrTok, "*"))
                         {
                             return error.BadConditonStatment;
                         }
@@ -435,6 +445,9 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                         {
                             return error.BadConditonStatment;
                         }
+
+                        // How much text is to be extracted? TODO(cjb): EOT condition?
+
                         if (!std.mem.eql(u8, CondItr.next() orelse "", "OFFSET"))
                         {
                             return error.BadConditonStatment;
@@ -455,6 +468,26 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                         if (GoodEO > Text.len)
                         {
                             GoodEO = Text.len;
+                        }
+
+                        if (!std.mem.eql(u8, CondItr.next() orelse "", "ON"))
+                        {
+                            return error.BadConditonStatment;
+                        }
+
+                        CurrTok = CondItr.next() orelse "";
+                        if (CurrTok.len > 1 and CurrTok[0] == '#')
+                        {
+                            const TargetPatternID =
+                                try std.fmt.parseUnsigned(c_ulonglong, CurrTok[1 .. ], 10);
+                            if (TargetPatternID + Cat.StartPatternID != Match.ID)
+                            {
+                                continue;
+                            }
+                        }
+                        else if (!std.mem.eql(u8, CurrTok, "*"))
+                        {
+                            return error.BadConditonStatment;
                         }
 
                         try W.arrayElem();
@@ -478,6 +511,8 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
 
             try W.endObject(); // End this category's JSON blurb.
         }
+
+        // Handle resolving categories that didn't match.
 
         for (ExtractorDef.CatBoxes) |Cat, CatIndex|
         {
@@ -529,7 +564,26 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                             continue;
                         }
 
-                        if (!std.mem.eql(u8, CondItr.next() orelse "", "MATCH"))
+                        CurrTok = CondItr.next() orelse "";
+                        if (CurrTok.len > 1 and CurrTok[0] == '#')
+                        {
+                            const TargetPatternID =
+                                try std.fmt.parseUnsigned(c_ulonglong, CurrTok[1 .. ], 10);
+                            var FoundTargetPatternID = false;
+                            for (MatchList.items) |Match|
+                            {
+                                if (Match.ID == TargetPatternID + Cat.StartPatternID)
+                                {
+                                    FoundTargetPatternID = true;
+                                    break;
+                                }
+                            }
+                            if (FoundTargetPatternID)
+                            {
+                                continue;
+                            }
+                        }
+                        else if (!std.mem.eql(u8, CurrTok, "*"))
                         {
                             return error.BadConditonStatment;
                         }

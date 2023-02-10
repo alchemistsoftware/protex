@@ -597,9 +597,6 @@ const DocSectionsContainer = document.createElement("div");
 DocSectionsContainer.id = "doc-sections-container";
 AContainer.appendChild(DocSectionsContainer);
 
-const DEBUGDisplayConfig = document.createElement("span");
-DEBUGDisplayConfig.className = "debug-display-config";
-
 const RunExtractor = document.createElement("button");
 RunExtractor.innerText = "Run extractor";
 RunExtractor.onclick = () =>
@@ -615,16 +612,6 @@ RunExtractor.onclick = () =>
     });
 }
 AContainer.appendChild(RunExtractor);
-
-const GenConfButton = document.createElement("button");
-GenConfButton.innerText = "Generate config!";
-GenConfButton.onclick = () =>
-{
-    const JSONConfigStr = GenJSONConfig(S);
-    DEBUGDisplayConfig.innerText = JSONConfigStr;
-}
-AContainer.appendChild(GenConfButton);
-AContainer.appendChild(DEBUGDisplayConfig);
 
 const AutoCompleteMenu = document.createElement("menu");
 AutoCompleteMenu.id = "auto-complete-menu";

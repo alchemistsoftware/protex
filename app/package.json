@@ -2,7 +2,7 @@
   "main": "./src/main.js",
   "name":"gracie",
   "description":"programmable text classifier and extractor",
-  "version": "0.3.1-alpha",
+  "version": "0.4.0-alpha",
   "scripts": {
     "compile": "./node_modules/.bin/tsc -b",
     "start": "electron-forge start",
