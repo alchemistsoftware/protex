@@ -85,8 +85,7 @@ function AddCat(S: protex_state, ExtrDefItem: HTMLElement, Name: string, Resolve
 
             const AutoCompleteMenu = TryGetElementByID("auto-complete-menu");
             AutoCompleteMenu.innerHTML = "";
-            const PatternsContainer = TryGetElementByClassName(
-                CategoryFieldsItem, "patterns-container", 0);
+            const PatternsContainer = TryGetElementByID("patterns-container");
             let EntryIndex = 0;
             for (const Elem of PatternsContainer
                  .getElementsByClassName("pattern-input"))
@@ -166,19 +165,11 @@ function AddCat(S: protex_state, ExtrDefItem: HTMLElement, Name: string, Resolve
     };
     CategoryFieldsItem.appendChild(RemoveCategoryButton);
 
-    const PatternsContainer = document.createElement("div");
-    PatternsContainer.className = "patterns-container";
-    CategoryFieldsItem.appendChild(PatternsContainer);
-
-    const AddPatternButton = document.createElement("button");
-    AddPatternButton.innerText = "New pattern";
-    AddPatternButton.onclick = () => AddPattern(S, PatternsContainer, "");
-    PatternsContainer.appendChild(AddPatternButton);
-
+    const PatternsContainer = TryGetElementByID("patterns-container");
     for (const P of Patterns) AddPattern(S, PatternsContainer, P);
 }
 
-interface gracie_state
+interface protex_state
 {
     PyIncludePath: string; // TODO(cjb): Config file shouldn't care about this.. but it does...
     PyIncludePathEntries: string[];
@@ -217,9 +208,6 @@ function UpdateSelectedPattern(TargetPatternInput: HTMLInputElement): void
         const EO = Re.lastIndex;
         const LHS = TextAreaText.substring(Offset, SO);
         const RHS = '<span class="noice">' + TextAreaText.substring(SO, EO) + '</span>';
-
-        console.log(LHS);
-        console.log(RHS);
 
         SpanifiedText += LHS + RHS;
         Offset = EO;
@@ -416,14 +404,6 @@ function GenJSONConfig(S: protex_state): string
                     CatItem, "main-py-module-select", 0) as HTMLSelectElement;
 
                 let Patterns: string[] = [];
-                const PatternsContainer = TryGetElementByClassName(
-                    CatItem, "patterns-container", 0);
-                for (const Elem of PatternsContainer
-                     .getElementsByClassName("pattern-input"))
-                {
-                    Patterns.push((Elem as HTMLInputElement).value);
-                }
-
                 if (ResolvesWithSelect.value === "script")
                 {
                     CatDefs.push({
@@ -498,19 +478,33 @@ ProtexWindow.ElectronAPI.GetPyIncludePath()
 });
 
 // Root container to add dom elements to.
-const AContainer = document.getElementById("acontainer")
+const AContainer = document.getElementById("a-container")
 if (AContainer == null)
 {
     throw "Couldn't get acontainer element";
 }
 
+const ABBoxContainer = document.createElement("div");
+ABBoxContainer.id = "ab-box-container";
+AContainer.appendChild(ABBoxContainer);
+
 const ABox = document.createElement("div");
-ABox.style.width = "95vw";
-ABox.style.height = "45vh";
-ABox.style.maxWidth = "95vw";
-ABox.style.maxHeight = "45vh";
-ABox.style.margin = "10px";
-AContainer.appendChild(ABox);
+ABox.className = "ab-item";
+ABBoxContainer.appendChild(ABox);
+
+const BBox = document.createElement("div");
+BBox.className = "ab-item";
+ABBoxContainer.appendChild(BBox);
+
+const PatternsContainer = document.createElement("div");
+PatternsContainer.id = "patterns-container";
+BBox.appendChild(PatternsContainer);
+
+const AddPatternButton = document.createElement("button");
+AddPatternButton.innerText = "+";
+AddPatternButton.className = "pattern-entry-button";
+AddPatternButton.onclick = () => AddPattern(S, PatternsContainer, "");
+PatternsContainer.appendChild(AddPatternButton);
 
 // Document's text area
 const DEBUGText = "Prep Cooks/Cooks Starting at $25 an Hour Qualifications\n    Restaurant: 1 year (Required)\n    Work authorization (Required)\n    High school or equivalent (Preferred)\nBenefits\n\Pulled from the full job description\n\Employee discount\n\Paid time off\n\Full Job Description\nCooks\nGreat Opportunity to work at a new all-seasons resort in Northern Catskills - Wylder Windham Hotel.\nWe are looking for a dedicated, passionate, and skilled person to become a part of our pre-opening kitchen team for our Babbler's Restaurant. Our four-season resort will offer 110 hotel rooms, 1 restaurant, 1 Bakery with 20 acres of land alongside the Batavia Kill River, our family-friendly, all-season resort is filled with endless opportunities. This newly reimagined property offers banquet, wedding, and event facilities. We are looking for someone who is both willing to roll up their sleeves and work hard and has a desire to produce a first-class experience for our guests. Looking for applicants who are positive, upbeat, team-oriented, and a people person.\nWylder is an ever growing hotel brand with locations in Lake Tahoe, California and Tilghman Maryland.\nLots of room for upward growth within the company at the Wylder Windham property and Beyond.\nYoung at heart, active, ambitious individuals encouraged to apply!\nMust work weekends, nights, holidays and be flexible with schedule. Must be able to lift 50 pounds and work a physical Labor Job.\nWylder's culture & motto: \"Everyone does everything, no one is above doing anything and the words that's not my job don't exist here\". We are here to make the guest experience the best it can be. We all work as a team and help one another out from the front desk to the restaurant and housekeeping to maintenance. We are dog and family-friendly in all aspects!.\nWylder's culture & motto: \"Everyone does everything, no one is above doing anything and the words that's not my job don't exist here\". We are here to make the guest experience the best it can be. We all work as a team and help one another out from the front desk to the restaurant and housekeeping to maintenance. We are dog and family friendly in all aspects!\nCompetitive Pay- starting at $25-$26+ per hour based on experience\nJob Type: Full-time/Part-Time\nJob Type: Full-time\nPay: From $25-$26+ per hour based on experience\nBenefits:\n    Employee discount\n\    Paid time off\nSchedule:\n    10 hour shift\n\    8 hour shift\n\    Every weekend\n\    Holidays\n\    Monday to Friday\n\    Weekend availability\nEducation:\n    High school or equivalent (Preferred)\nExperience:\n    cooking: 1 year (Preferred)\nWork Location: One location\nJob Type: Full-time\nPay: $25.00 - $26.00 per hour\nBenefits:\n    Employee discount\n\    Paid time off\nPhysical setting:\n    Casual dining restaurant\nSchedule:\n    8 hour shift\n\    Day shift\n\    Holidays\n\    Monday to Friday\n\    Night shift\n\    Weekend availability\nEducation:\n    High school or equivalent (Preferred)\nExperience:\n    Restaurant: 1 year (Required)";
@@ -543,8 +537,19 @@ TA.addEventListener("blur", () => //TODO(cjb): fix me... <span> wrapping for mul
 ABox.appendChild(TA);
 
 const PreText = document.createElement("pre");
+PreText.setAttribute("tabIndex", "0");
 PreText.id = "pre-text"; // working id name...
 PreText.innerHTML = DEBUGText;
+PreText.addEventListener("keydown", (E: Event) =>
+{
+    if ((E as KeyboardEvent).key === "Enter")
+    {
+        // Toggle TA selection
+        PreText.style.display = "none";
+        TA.style.display = "inline-block";
+        TA.focus();
+    }
+});
 PreText.onclick = () =>
 {
     // Toggle TA selection
@@ -613,3 +618,30 @@ const AutoCompleteMenu = document.createElement("menu");
 AutoCompleteMenu.id = "auto-complete-menu";
 AContainer.appendChild(AutoCompleteMenu);
 
+const DEBUGSelected = document.createElement("p");
+DEBUGSelected.className = "bottomleft";
+document.addEventListener("keyup", (E: Event) => {
+    if ((E as KeyboardEvent).key === "Tab")
+    {
+        if (E.target !== null)
+        {
+            const LocalName = (E.target as HTMLElement).localName;
+            const ClassName = (E.target as HTMLElement).className;
+            DEBUGSelected.innerText = `${LocalName}.${ClassName}`;
+        }
+    }
+});
+AContainer.appendChild(DEBUGSelected);
+
+// Ascii fox by Brian Kendig
+const AsciiFox4Motivation = document.createElement("pre");
+AsciiFox4Motivation.className = "bottomright";
+AsciiFox4Motivation.innerText = `
+   |\\/|    ____
+.__.. \\   /\\  /
+ \\_   /__/  \\/
+ _/  __   __/
+/___/____/
+v0.5.0-alpha
+`;
+AContainer.appendChild(AsciiFox4Motivation);
