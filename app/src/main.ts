@@ -112,21 +112,29 @@ electron.ipcMain.handle("write-config", async (Event: any, ConfigStr: string) =>
     });
 });
 
-const createWindow = () =>
+const CreateWindow = () =>
 {
-    const win = new electron.BrowserWindow({
+
+    // Query primary display to find min width/height
+
+    const Display = electron.screen.getPrimaryDisplay();
+    const MinWidth = Math.floor(Display.size.width / 3);
+    const MinHeight = Math.floor(Display.size.height / 3)
+
+    const Win = new electron.BrowserWindow({
         autoHideMenuBar: true,
-        width: 800,
-        height: 600,
+        width: MinWidth,
+        height: MinHeight,
         webPreferences: {
             preload: path.join(__dirname, "preload.js")
         }
     });
+    Win.setMinimumSize(MinWidth, MinHeight);
 
-    win.loadFile(path.join(__dirname, "../index.html"));
+    Win.loadFile(path.join(__dirname, "../index.html"));
 }
 
 electron.app.whenReady().then(() =>
 {
-    createWindow();
+    CreateWindow();
 })
