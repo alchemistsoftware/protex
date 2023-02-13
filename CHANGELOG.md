@@ -1,9 +1,10 @@
-# Gracie changelog
+# Protex changelog
 
 This project adheres to [semver](https://semver.org/)
 
-## [0.4.0-alpha] - unreleased
+## [0.5.0-alpha] - unreleased
 ### Added
+- a Fox
 - Extract/Tag conditions can now specify specific patterns.
 
 ### Fixed
@@ -17,6 +18,7 @@ This project adheres to [semver](https://semver.org/)
 
 ### Changed
 - Text scrollbars are now hidden
+- Project name is now "protex"
 
 ### Added
 - Pressing '~' during conditional statement editing now prompts an auto complete for the pattern
@@ -82,12 +84,12 @@ This project adheres to [semver](https://semver.org/)
 - Sempy run now writes to a utf8 encoded byte buffer rather than a wchar buffer.
 
 ### Fixed
-- Gracie unit test (again)
+- Extractor Unit test (again)
 - sempy init/deinit crash
 
 ## [0.0.4-alpha] - 01-04-23
 ### Fixed
-- Gracie unit test
+- Extractor Unit test
 - Memory leaks caused by moving off of a backing buffer.
 
 ### Added
