@@ -7,14 +7,14 @@
 #include <assert.h>
 #include <sys/mman.h>
 
-int GracieInit(void **GracieCtx, uint8_t *ArtifactPath);
-int GracieDeinit(void **GracieCtx);
-int GracieExtract(void **GracieCtx, uint8_t *Text, uint32_t nTextBytes, uint8_t **Result,
+int ProtexInit(void **ProtexCtx, uint8_t *ArtifactPath);
+int ProtexDeinit(void **ProtexCtx);
+int ProtexExtract(void **ProtexCtx, uint8_t *Text, uint32_t nTextBytes, uint8_t **Result,
         uint32_t *nBytesCopied);
 
-#define GRACIE_SUCCESS 0 // Call was executed successfully
-#define GRACIE_INVALID -1 // Bad paramater was passed
-#define GRACIE_UNKNOWN_ERROR -2 // Unhandled internal error
+#define PROTEX_SUCCESS 0 // Call was executed successfully
+#define PROTEX_INVALID -1 // Bad paramater was passed
+#define PROTEX_UNKNOWN_ERROR -2 // Unhandled internal error
 
 int main(int argc, char **argv)
 {
@@ -36,25 +36,25 @@ int main(int argc, char **argv)
         }
     }
 
-    void *GracieCtx;
-    if (GracieInit(&GracieCtx, argv[1]) != GRACIE_SUCCESS)
+    void *ProtexCtx;
+    if (ProtexInit(&ProtexCtx, argv[1]) != PROTEX_SUCCESS)
     {
-        puts("GracieInit failed :(");
+        puts("ProtexInit failed :(");
         return -1;
     };
 
     uint8_t *Result;
     uint32_t nBytesCopied;
-    if (GracieExtract(&GracieCtx, Text, TextIndex, &Result, &nBytesCopied) == GRACIE_SUCCESS)
+    if (ProtexExtract(&ProtexCtx, Text, TextIndex, &Result, &nBytesCopied) == PROTEX_SUCCESS)
     {
         for (int CharIndex=0; CharIndex < nBytesCopied; ++CharIndex)
             putchar(Result[CharIndex]);
         putchar('\n');
-        GracieDeinit(&GracieCtx);
+        ProtexDeinit(&ProtexCtx);
     }
     else
     {
-        puts("GracieExtract failed :(");
+        puts("ProtexExtract failed :(");
         return -1;
     }
 }

@@ -4,12 +4,12 @@ interface py_include_path_and_entries
     Entries: string[],
 }
 
-function AddEmptyCat(S: gracie_state, ExtrDefItem: HTMLElement): void
+function AddEmptyCat(S: protex_state, ExtrDefItem: HTMLElement): void
 {
     AddCat(S, ExtrDefItem, "", "", "", "", []);
 }
 
-function AddCat(S: gracie_state, ExtrDefItem: HTMLElement, Name: string, ResolvesWith: string,
+function AddCat(S: protex_state, ExtrDefItem: HTMLElement, Name: string, ResolvesWith: string,
     Conditions: string, MainPyModule: string, Patterns: string[]): void
 {
     const CategoryFieldsContainer = document.createElement("div");
@@ -229,36 +229,32 @@ function UpdateSelectedPattern(TargetPatternInput: HTMLInputElement): void
     PreText.innerHTML = SpanifiedText;
 }
 
-function AddPattern(S: gracie_state, PatternsContainer: HTMLElement, Pattern: string): void
+function AddPattern(S: protex_state, PatternsContainer: HTMLElement, Pattern: string): void
 {
+    const PatternEntry = document.createElement("dib");
+    PatternEntry.className = "pattern-entry";
+    PatternsContainer.appendChild(PatternEntry);
+
     const PatternInput = document.createElement("input");
     PatternInput.className = "pattern-input";
     PatternInput.setAttribute("IsSelected", "false");
     PatternInput.value = Pattern;
     PatternInput.addEventListener("focus", () => UpdateSelectedPattern(PatternInput));
     PatternInput.addEventListener("input", () => UpdateSelectedPattern(PatternInput));
-    PatternsContainer.appendChild(PatternInput);
+    PatternEntry.appendChild(PatternInput);
 
     const RemovePatternButton = document.createElement("button");
-    RemovePatternButton.innerText = "Remove";
+    RemovePatternButton.className = "pattern-entry-button";
+    RemovePatternButton.innerText = "-";
     RemovePatternButton.onclick = () =>
     {
-        const LSPI = LastSelectedPatternInput();
-        if ((LSPI != null) &&
-            (LSPI === PatternInput))
-        {
-            const PatternInputs = PatternsContainer.getElementsByClassName(
-                "pattern-input") as HTMLCollection;
-            if (PatternInputs.length - 1 > 0)
-                UpdateSelectedPattern(PatternInputs.item(0) as HTMLInputElement);
-        }
         PatternInput.remove();
         RemovePatternButton.remove();
     }
-    PatternsContainer.appendChild(RemovePatternButton);
+    PatternEntry.appendChild(RemovePatternButton);
 }
 
-function AddExtr(S: gracie_state, ExtrName: string): HTMLElement
+function AddExtr(S: protex_state, ExtrName: string): HTMLElement
 {
     const ExtrDefsContainer = document.getElementById("extr-defs-container");
     if (ExtrDefsContainer == null)
@@ -291,7 +287,7 @@ function AddExtr(S: gracie_state, ExtrName: string): HTMLElement
     return ExtrDefItem;
 }
 
-function PopulatePyModuleSelectOptions(S: gracie_state, Selector: HTMLSelectElement,
+function PopulatePyModuleSelectOptions(S: protex_state, Selector: HTMLSelectElement,
     SelectText: string): void
 {
     Selector.innerText = "";
@@ -327,7 +323,7 @@ interface extr_def
     Categories: cat_def[],
 };
 
-interface gracie_config
+interface protex_config
 {
     PyIncludePath: string,
     ExtractorDefinitions: extr_def[],
@@ -335,12 +331,12 @@ interface gracie_config
 
 //  Give window an ElectronAPI property so I don't have to cast it as any.
 
-interface gracie_window extends Window
+interface protex_window extends Window
 {
     ElectronAPI: any
 };
 
-const GracieWindow = window as unknown as gracie_window;
+const ProtexWindow = window as unknown as protex_window;
 
 function TryGetElementByClassName(ParentElem: Element, ClassName: string,
     Index: number): HTMLElement
@@ -364,7 +360,7 @@ function TryGetElementByID(ElemId: string): HTMLElement
     return Elem;
 }
 
-function ImportJSONConfig(S: gracie_state, E: Event): void
+function ImportJSONConfig(S: protex_state, E: Event): void
 {
     if ((E.target == null) ||
         ((E.target as HTMLElement).id != "import-config-input"))
@@ -395,7 +391,7 @@ function ImportJSONConfig(S: gracie_state, E: Event): void
     });
 }
 
-function GenJSONConfig(S: gracie_state): string
+function GenJSONConfig(S: protex_state): string
 {
     const PyIncludePath = S.PyIncludePath;
     let ExtrDefs: extr_def[] = [];
@@ -492,9 +488,9 @@ const ConfName = "webs_conf.json"; //TODO(cjb): Make this a texbox
 // Initialization
 //
 
-let S = {} as gracie_state;
+let S = {} as protex_state;
 
-GracieWindow.ElectronAPI.GetPyIncludePath()
+ProtexWindow.ElectronAPI.GetPyIncludePath()
     .then((Result: py_include_path_and_entries) =>
 {
     S.PyIncludePath = Result.PyIncludePath;
@@ -602,9 +598,9 @@ RunExtractor.innerText = "Run extractor";
 RunExtractor.onclick = () =>
 {
     const ConfigStr = GenJSONConfig(S);
-    GracieWindow.ElectronAPI.WriteConfig(ConfigStr).then(() =>
+    ProtexWindow.ElectronAPI.WriteConfig(ConfigStr).then(() =>
     {
-        GracieWindow.ElectronAPI.RunExtractor(ConfName, TA.value)
+        ProtexWindow.ElectronAPI.RunExtractor(ConfName, TA.value)
             .then((ExtractorOut: any) =>
         {
             console.log(ExtractorOut);

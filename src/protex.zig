@@ -51,16 +51,16 @@ PyCallbacks: array_list(sempy.callback_fn), //TODO(cjb): slice of py callbacks
 //
 
 /// Call was executed successfully
-pub const GRACIE_SUCCESS: c_int = 0;
+pub const PROTEX_SUCCESS: c_int = 0;
 
 /// Bad paramater was passed
-pub const GRACIE_INVALID: c_int = -1;
+pub const PROTEX_INVALID: c_int = -1;
 
 /// Unhandled internal error
-pub const GRACIE_UNKNOWN_ERROR: c_int = -2;
+pub const PROTEX_UNKNOWN_ERROR: c_int = -2;
 
 /// A memory allocation failed
-pub const GRACIE_NOMEM: c_int = -3;
+pub const PROTEX_NOMEM: c_int = -3;
 
 /// Maps hyperscan status codes to an eqv. error. This way we may take advantage of zig's err
 /// handling system.
@@ -93,9 +93,9 @@ fn ErrToCode(Err: anyerror) c_int
     std.log.err("{}", .{Err});
     switch(Err)
     {
-        error.OutOfMemory => return GRACIE_NOMEM,
+        error.OutOfMemory => return PROTEX_NOMEM,
         error.FileNotFound,
-        error.BadConditonStatment => return GRACIE_INVALID,
+        error.BadConditonStatment => return PROTEX_INVALID,
         error.HSInvalid,
         error.HSNoMem,
         error.HSScanTerminated,
@@ -111,13 +111,13 @@ fn ErrToCode(Err: anyerror) c_int
         error.HSUnknown,
         error.SempyInvalid,
         error.SempyConvertArgs,
-        error.SempyUnknown => return GRACIE_UNKNOWN_ERROR,
+        error.SempyUnknown => return PROTEX_UNKNOWN_ERROR,
 
         else => unreachable,
     }
 }
 
-export fn GracieInit(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
+export fn ProtexInit(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv(.C) c_int
 {
     var Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
     var Ally = std.heap.page_allocator;
@@ -129,7 +129,7 @@ export fn GracieInit(Ctx: ?*?*anyopaque, ArtifactPathZ: ?[*:0]const u8) callconv
 
     Self.?.*.?.* = Init(Ally, ArtifactPathZ.?[0 .. PathLen]) catch |Err|
         return ErrToCode(Err);
-    return GRACIE_SUCCESS;
+    return PROTEX_SUCCESS;
 }
 
 pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
@@ -278,7 +278,7 @@ fn HSMatchHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
     return 0;
 }
 
-export fn GracieExtract(Ctx: ?*?*anyopaque, Text: ?[*]const u8,
+export fn ProtexExtract(Ctx: ?*?*anyopaque, Text: ?[*]const u8,
     nTextBytes: c_uint, Result: ?*[*]u8, nBytesCopied: ?*c_uint) callconv(.C) c_int
 {
     var Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
@@ -287,7 +287,7 @@ export fn GracieExtract(Ctx: ?*?*anyopaque, Text: ?[*]const u8,
 
     nBytesCopied.?.* = @intCast(c_uint, ExtractResult.len);
     Result.?.* = @ptrCast([*]u8, ExtractResult.ptr);
-    return GRACIE_SUCCESS;
+    return PROTEX_SUCCESS;
 }
 
 pub fn Extract(Self: *self, Text: []const u8) ![]u8
@@ -621,12 +621,12 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
     return JSONStream.getWritten(); // Return JSON which was just written.
 }
 
-export fn GracieDeinit(Ctx: ?*?*anyopaque) callconv(.C) c_int
+export fn ProtexDeinit(Ctx: ?*?*anyopaque) callconv(.C) c_int
 {
     const Self = @ptrCast(?*?*self, @alignCast(@alignOf(?*self), Ctx));
     Deinit(Self.?.*.?);
     Self.?.*.?.Ally.destroy(Self.?.*.?);
-    return GRACIE_SUCCESS;
+    return PROTEX_SUCCESS;
 }
 
 pub fn Deinit(Self: *self) void
@@ -656,22 +656,22 @@ pub fn Deinit(Self: *self) void
     sempy.Deinit();
 }
 
-test "Gracie C"
+test "Protex C"
 {
     var G: ?*anyopaque = undefined;
     var Result: [*]u8 = undefined;
     var nBytesCopied: c_uint = undefined;
     const Text = "Earn $30 an hour";
 
-    debug.assert(GracieInit(&G, "./data/gracie.bin") == GRACIE_SUCCESS);
-    debug.assert(GracieExtract(&G, Text, Text.len, &Result, &nBytesCopied) == GRACIE_SUCCESS);
-    debug.assert(GracieDeinit(&G) == GRACIE_SUCCESS);
+    debug.assert(ProtexInit(&G, "./data/protex.bin") == PROTEX_SUCCESS);
+    debug.assert(ProtexExtract(&G, Text, Text.len, &Result, &nBytesCopied) == PROTEX_SUCCESS);
+    debug.assert(ProtexDeinit(&G) == PROTEX_SUCCESS);
 }
 
-test "Gracie"
+test "Protex"
 {
     var Ally = std.testing.allocator;
-    var G = try self.Init(Ally, "./data/gracie.bin");
+    var G = try self.Init(Ally, "./data/protex.bin");
     _ = try self.Extract(&G, "Earn $30 an hour");
     self.Deinit(&G);
 }
