@@ -2,7 +2,7 @@
 
 This project adheres to [semver](https://semver.org/)
 
-## [0.5.0-alpha] - unreleased
+## [0.4.0-alpha] - unreleased
 ### Added
 - a Fox
 - Extract/Tag conditions can now specify specific patterns.
