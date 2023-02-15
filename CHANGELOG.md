@@ -6,6 +6,8 @@ This project adheres to [semver](https://semver.org/)
 ### Added
 - a Fox
 - Extract/Tag conditions can now specify specific patterns.
+- Script editing.
+- Dedicated pattern editing area.
 
 ### Fixed
 - Text tabs/new-lines are now properly displayed.
@@ -19,6 +21,7 @@ This project adheres to [semver](https://semver.org/)
 ### Changed
 - Text scrollbars are now hidden
 - Project name is now "protex"
+- Extractor now allways resolves with a script.
 
 ### Added
 - Pressing '~' during conditional statement editing now prompts an auto complete for the pattern
