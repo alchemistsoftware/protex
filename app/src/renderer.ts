@@ -25,54 +25,6 @@ function AddCat(S: protex_state, ExtrDefItem: HTMLElement, Name: string, Resolve
     CategoryNameInput.value = Name;
     CategoryFieldsItem.appendChild(CategoryNameInput);
 
-    const ResolvesWithSelect = document.createElement("select") as HTMLSelectElement;
-    ResolvesWithSelect.className = "resolves-with-select";
-    const ScriptOption = document.createElement("option");
-    ScriptOption.text = "script";
-    ScriptOption.value = ScriptOption.text;
-    ResolvesWithSelect.add(ScriptOption);
-    const ConditionsOption = document.createElement("option");
-    ConditionsOption.text = "conditions";
-    ConditionsOption.value = ConditionsOption.text;
-    ResolvesWithSelect.add(ConditionsOption);
-    CategoryFieldsItem.appendChild(ResolvesWithSelect);
-
-    const MainPyModuleSelect = document.createElement("select") as HTMLSelectElement;
-    MainPyModuleSelect.className = "main-py-module-select";
-    CategoryFieldsItem.appendChild(MainPyModuleSelect);
-
-    // First selector added to document is source of truth for avaliable modules..
-
-    let SourceOfTruthSelector = document.getElementById(
-        "sot-main-py-module-select") as HTMLSelectElement | null;
-    if (SourceOfTruthSelector == null)
-    {
-        MainPyModuleSelect.id = "sot-main-py-module-select";
-        PopulatePyModuleSelectOptions(S, MainPyModuleSelect, MainPyModule);
-    }
-    else
-    {
-        // Copy selector options
-
-        for (let SelectIndex = 0;
-             SelectIndex < SourceOfTruthSelector.children.length;
-             ++SelectIndex)
-        {
-            const PyModuleNameOption = document.createElement("option");
-            MainPyModuleSelect.add(PyModuleNameOption);
-
-            PyModuleNameOption.text =
-                (SourceOfTruthSelector.children[SelectIndex] as HTMLOptionElement).text;
-            PyModuleNameOption.value =
-                (SourceOfTruthSelector.children[SelectIndex] as HTMLOptionElement).value;
-            if (PyModuleNameOption.text === MainPyModule) // NOTE(cjb): Element needs to exist in
-                                                          //   DOM before you are allowed to screw
-            {                                             //   with 'selectedIndex'.
-                MainPyModuleSelect.selectedIndex = SelectIndex;
-            }
-        }
-    }
-
     const ConditionsInput = document.createElement("input");
     ConditionsInput.className = "conditions-input";
     ConditionsInput.value = Conditions;
@@ -124,39 +76,6 @@ function AddCat(S: protex_state, ExtrDefItem: HTMLElement, Name: string, Resolve
     });
     CategoryFieldsItem.appendChild(ConditionsInput);
 
-    function UpdateResolvesWith(): void
-    {
-        if (ResolvesWithSelect.value === "script")
-        {
-            ConditionsInput.style.display = "none";
-            MainPyModuleSelect.style.display = ""
-        }
-        else if (ResolvesWithSelect.value === "conditions")
-        {
-            MainPyModuleSelect.style.display = "none";
-            ConditionsInput.style.display = ""
-        }
-        else
-        {
-            throw "Unknown 'ResolvesWith' value";
-        }
-    }
-    ResolvesWithSelect.addEventListener("change", () => UpdateResolvesWith());
-
-    // Initial resolves with value.
-
-    for (let SelectedIndex=0;
-         SelectedIndex < ResolvesWithSelect.options.length;
-         ++SelectedIndex)
-     {
-         if (ResolvesWithSelect.options[SelectedIndex].value === ResolvesWith)
-         {
-             ResolvesWithSelect.selectedIndex = SelectedIndex;
-             break;
-         }
-     }
-    UpdateResolvesWith();
-
     const RemoveCategoryButton = document.createElement("button");
     RemoveCategoryButton.innerText = "Remove Category";
     RemoveCategoryButton.onclick = () =>
@@ -165,14 +84,11 @@ function AddCat(S: protex_state, ExtrDefItem: HTMLElement, Name: string, Resolve
     };
     CategoryFieldsItem.appendChild(RemoveCategoryButton);
 
-    const PatternsContainer = TryGetElementByID("patterns-container");
-    for (const P of Patterns) AddPattern(S, PatternsContainer, P);
 }
 
 interface protex_state
 {
-    PyIncludePath: string; // TODO(cjb): Config file shouldn't care about this.. but it does...
-    PyIncludePathEntries: string[];
+    ScriptNames: string[];
 };
 
 function LastSelectedPatternInput(): HTMLInputElement | null
@@ -280,7 +196,7 @@ function PopulatePyModuleSelectOptions(S: protex_state, Selector: HTMLSelectElem
 {
     Selector.innerText = "";
 
-    const PyEntries = S.PyIncludePathEntries;
+    const PyEntries = S.ScriptNames;
     let SelectIndex = -1;
     PyEntries.forEach((PyModule, PyModuleIndex) =>
     {
@@ -299,16 +215,14 @@ function PopulatePyModuleSelectOptions(S: protex_state, Selector: HTMLSelectElem
 interface cat_def
 {
     Name: string,
-    ResolvesWith: string,
     Conditions: string,
-    MainPyModule: string,
-    Patterns: string[],
 };
 
 interface extr_def
 {
     Name: string,
     Categories: cat_def[],
+    Patterns: string[],
 };
 
 interface protex_config
@@ -317,11 +231,11 @@ interface protex_config
     ExtractorDefinitions: extr_def[],
 };
 
-//  Give window an ElectronAPI property so I don't have to cast it as any.
+//  Give window an ProtexAPI property so I don't have to cast it as any.
 
 interface protex_window extends Window
 {
-    ElectronAPI: any
+    ProtexAPI: any
 };
 
 const ProtexWindow = window as unknown as protex_window;
@@ -368,6 +282,7 @@ function ImportJSONConfig(S: protex_state, E: Event): void
     }
     Files[0].text().then(Text =>
     {
+        const PatternsContainer = TryGetElementByID("patterns-container");
         const JSONConfig = JSON.parse(Text);
         for (const ExtrDef of JSONConfig.ExtractorDefinitions)
         {
@@ -375,13 +290,17 @@ function ImportJSONConfig(S: protex_state, E: Event): void
             for (const Cat of ExtrDef.Categories)
                 AddCat(S, ExtrDefElem, Cat.Name, Cat.ResolvesWith, Cat.Conditions, Cat.MainPyModule,
                        Cat.Patterns);
+
+            for (const P of ExtrDef.Patterns)
+            {
+                AddPattern(S, PatternsContainer, P);
+            }
         }
     });
 }
 
 function GenJSONConfig(S: protex_state): string
 {
-    const PyIncludePath = S.PyIncludePath;
     let ExtrDefs: extr_def[] = [];
     const ExtrDefsContainer = TryGetElementByID("extr-defs-container");
     for (const ExtrDefItem of ExtrDefsContainer.children)
@@ -396,55 +315,34 @@ function GenJSONConfig(S: protex_state): string
             Patterns.push((Elem as HTMLInputElement).value);
         }
 
-        let CatDefs: any[] = [];
+        let CatDefs: cat_def[] = [];
         for (const CatFieldsContainer of ExtrDefItem.getElementsByClassName("cat-fields-container"))
         {
             for (const CatItem of CatFieldsContainer.children)
             {
                 const CatNameInput = TryGetElementByClassName(
                     CatItem, "cat-name-input", 0) as HTMLInputElement;
-                const ResolvesWithSelect = TryGetElementByClassName(
-                    CatItem, "resolves-with-select", 0) as HTMLSelectElement;
                 const ConditionsInput = TryGetElementByClassName(
                     CatItem, "conditions-input", 0) as HTMLInputElement;
-                const MainPyModuleSelect = TryGetElementByClassName(
-                    CatItem, "main-py-module-select", 0) as HTMLSelectElement;
 
-                if (ResolvesWithSelect.value === "script")
-                {
-                    CatDefs.push({
-                        Name: CatNameInput.value,
-                        ResolvesWith: ResolvesWithSelect.value,
-                        MainPyModule: MainPyModuleSelect.value,
-                        Patterns: Patterns,
-                    });
-                }
-                else if (ResolvesWithSelect.value === "conditions")
-                {
-                    CatDefs.push({
-                        Name: CatNameInput.value,
-                        ResolvesWith: ResolvesWithSelect.value,
-                        Conditions: ConditionsInput.value,
-                        Patterns: Patterns,
-                    });
-                }
-                else
-                {
-                    throw "Unknown 'ResolvesWith' value";
-                }
+                CatDefs.push({
+                    Name: CatNameInput.value,
+                    Conditions: ConditionsInput.value,
+                });
             }
         }
 
         const NewExtrDef: extr_def = {
             Name: (NameInput as HTMLInputElement).value,
             Categories: CatDefs,
+            Patterns: Patterns
         };
         ExtrDefs.push(NewExtrDef);
     }
 
-    console.log({ConfName: ConfName, PyIncludePath: PyIncludePath,
+    console.log({ConfName: ConfName,
         ExtractorDefinitions: ExtrDefs});
-    return JSON.stringify({ConfName: ConfName, PyIncludePath: PyIncludePath,
+    return JSON.stringify({ConfName: ConfName,
         ExtractorDefinitions: ExtrDefs});
 }
 
@@ -477,11 +375,10 @@ const ConfName = "webs_conf.json"; //TODO(cjb): Make this a texbox
 
 let S = {} as protex_state;
 
-ProtexWindow.ElectronAPI.GetPyIncludePath()
-    .then((Result: py_include_path_and_entries) =>
+ProtexWindow.ProtexAPI.GetScriptNames()
+    .then((Result: string[]) =>
 {
-    S.PyIncludePath = Result.PyIncludePath;
-    S.PyIncludePathEntries = Result.Entries.slice(0);
+    S.ScriptNames = Result.slice(0);
 
     // Root container to add dom elements to.
     const AContainer = document.getElementById("a-container")
@@ -508,6 +405,17 @@ ProtexWindow.ElectronAPI.GetPyIncludePath()
 
     const ScriptEditingTA = document.createElement("textarea");
     ScriptEditingTA.id = "script-editing-ta";
+    ScriptEditingTA.onkeyup = (E: KeyboardEvent) =>
+    {
+        if (E.ctrlKey && E.key === "s")
+        {
+            const ScriptName = ScriptEditingTA.getAttribute("name");
+            if (ScriptName !== null)
+            {
+                ProtexWindow.ProtexAPI.WriteScript((ScriptName as string), ScriptEditingTA.value);
+            }
+        }
+    }
     ScriptEditingTA.setAttribute("spellcheck", "false");
     BBox.appendChild(ScriptEditingTA);
 
@@ -588,13 +496,48 @@ ProtexWindow.ElectronAPI.GetPyIncludePath()
     const ScriptNameInput = document.createElement("input");
     ScriptControlsContainer.appendChild(ScriptNameInput);
 
+    const ActiveScriptSelect = document.createElement("select");
+    ActiveScriptSelect.onchange = () => {
+        const NewScriptName = ActiveScriptSelect.value;
+
+        const OldScriptName = ScriptEditingTA.getAttribute("name");
+        if (OldScriptName !== null)
+        {
+            ProtexWindow.ProtexAPI.WriteScript((OldScriptName as string), ScriptEditingTA.value);
+        }
+
+        ProtexWindow.ProtexAPI.ReadScript(NewScriptName).then((Result: string) =>
+        {
+            ScriptEditingTA.setAttribute("name", NewScriptName);
+            ScriptEditingTA.value = Result;
+        });
+    };
+    PopulatePyModuleSelectOptions(S, ActiveScriptSelect, "");
+
     const AddScriptButton = document.createElement("button");
     AddScriptButton.innerText = "New script";
-    ScriptControlsContainer.appendChild(AddScriptButton);
+    AddScriptButton.onclick = () =>
+    {
+        const ScriptName = ScriptNameInput.value;
+        if (ScriptName === "")
+        {
+            return;
+        }
+        ScriptNameInput.value = "";
 
-    const ActiveScriptSelect = document.createElement("select");
+        ScriptEditingTA.value =
+            `def protex_main(text: str, so: int, eo: int) -> str:\n    return ""`;
+        ScriptEditingTA.setAttribute("name", ScriptName);
+        ProtexWindow.ProtexAPI.WriteScript(ScriptName, ScriptEditingTA.value);
+        ProtexWindow.ProtexAPI.GetScriptNames()
+            .then((Result: string[]) =>
+        {
+            S.ScriptNames = Result.slice(0);
+            PopulatePyModuleSelectOptions(S, ActiveScriptSelect, ScriptName);
+        });
+    };
+    ScriptControlsContainer.appendChild(AddScriptButton);
     ScriptControlsContainer.appendChild(ActiveScriptSelect);
-    PopulatePyModuleSelectOptions(S, ActiveScriptSelect, "");
 
     const NewExtrDefFieldsContainer = document.createElement("div");
     NewExtrDefFieldsContainer.id = "new-extr-def-fields-container";
@@ -628,9 +571,9 @@ ProtexWindow.ElectronAPI.GetPyIncludePath()
     RunExtractor.onclick = () =>
     {
         const ConfigStr = GenJSONConfig(S);
-        ProtexWindow.ElectronAPI.WriteConfig(ConfigStr).then(() =>
+        ProtexWindow.ProtexAPI.WriteConfig(ConfigStr).then(() =>
         {
-            ProtexWindow.ElectronAPI.RunExtractor(ConfName, TA.value)
+            ProtexWindow.ProtexAPI.RunExtractor(ConfName, TA.value)
                 .then((ExtractorOut: any) =>
             {
                 console.log(ExtractorOut);
