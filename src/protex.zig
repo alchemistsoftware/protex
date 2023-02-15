@@ -24,10 +24,7 @@ const cat_box = struct
 {
     Name: []u8,
     Conditions: []u8,
-    MainPyModuleIndex: isize,
-    ResolvesWith: common.arti_cat_resolves_with,
-    StartPatternID: c_uint,
-    EndPatternID: c_uint,
+    MainPyModuleIndex: usize,
 };
 
 const extractor_def = struct
@@ -223,7 +220,6 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
 //
 
         ExtrDef.CatBoxes = try Self.Ally.alloc(cat_box, DefHeader.nCategories);
-        var PatternSum: usize = 0;
         var CatIndex: usize = 0;
         while (CatIndex < DefHeader.nCategories) : (CatIndex += 1)
         {
@@ -235,26 +231,10 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
             var Conditions = try Ally.alloc(u8, CatHeader.nCategoryConditionBytes);
             debug.assert(try R.readAll(Conditions) == CatHeader.nCategoryConditionBytes);
 
-            var nPatternsForCategory: usize = undefined;
-            debug.assert(try R.readAll(@ptrCast([*]u8, &nPatternsForCategory)
-                    [0 .. @sizeOf(usize)]) == @sizeOf(usize));
-            PatternSum += nPatternsForCategory;
-
-            var MainPyModuleIndex: isize = undefined;
-            debug.assert(try R.readAll(@ptrCast([*]u8, &MainPyModuleIndex)
-                    [0 .. @sizeOf(isize)]) == @sizeOf(isize));
-
-            var ResolvesWith: common.arti_cat_resolves_with = undefined;
-            debug.assert(try R.readAll(@ptrCast([*]u8, &ResolvesWith)
-                    [0 .. @sizeOf(c_int)]) == @sizeOf(c_int));
-
            ExtrDef.CatBoxes[CatIndex] = cat_box{
                .Name = Name,
                .Conditions = Conditions,
-               .MainPyModuleIndex = MainPyModuleIndex,
-               .ResolvesWith = ResolvesWith,
-               .StartPatternID = @intCast(c_uint, PatternSum - nPatternsForCategory),
-               .EndPatternID = @intCast(c_uint, PatternSum),
+               .MainPyModuleIndex = CatHeader.MainPyModuleIndex,
            };
         }
 
@@ -322,298 +302,56 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
         try W.objectField(ExtractorDef.Name);
         try W.beginArray();
 
-        // Track which categories had matches ( allowing up to 128 )
+        //TODO(cjb): Decide how to handle multi matches within same category
 
-        var CatsWithMatches = std.bit_set.IntegerBitSet(128).initEmpty();
-
-        //TODO(cjb): Handle multi matches within same category
-
-        for (MatchList.items) |Match|
+        for (ExtractorDef.CatBoxes) |Cat|
         {
-            // Determine which category was matched and mark it with "got a match".
-
-            var CatIndex: usize = 0;
-            for (ExtractorDef.CatBoxes) |Cat|
+            for (MatchList.items) |Match|
             {
-                if ((Match.ID >= Cat.StartPatternID) and
-                    (Match.ID < Cat.EndPatternID))
+                var CondItr = std.mem.tokenize(u8, Cat.Conditions, " ");
+                var CurrTok = CondItr.next() orelse "";
+                if (CurrTok.len > 1 and CurrTok[0] == '#')
                 {
-                    CatsWithMatches.setValue(CatIndex, true);
-                    break;
+                    // If we can find this match in matchlist than continue
+
+                    const TargetPatternID =
+                        try std.fmt.parseUnsigned(c_ulonglong, CurrTok[1 .. ], 10);
+                    if (TargetPatternID != Match.ID)
+                    {
+                        continue;
+                    }
                 }
-                CatIndex += 1;
-            }
-            const Cat = ExtractorDef.CatBoxes[CatIndex];
-
-            switch (Cat.ResolvesWith)
-            {
-                .Script =>
+                else if (!std.mem.eql(u8, CurrTok, "*"))
                 {
-                    debug.assert(Cat.MainPyModuleIndex != -1);
-
-                    var nBytesCopied = try sempy.Run(
-                        Self.PyCallbacks.items[@intCast(usize, Cat.MainPyModuleIndex)],
-                        Text[Match.SO .. Match.EO],
-                        SempyRunBuf);
-
-                    try W.arrayElem();
-                    try W.beginObject();
-                    try W.objectField(Cat.Name);
-                    try W.emitString(SempyRunBuf[0..nBytesCopied]);
-
-                    // Spit out match indicies ( mostly for web client's benifit )
-
-                    try W.objectField("SO");
-                    try W.emitNumber(Match.SO);
-                    try W.objectField("EO");
-                    try W.emitNumber(Match.EO);
-                },
-
-                .Conditions =>
+                    return error.BadConditonStatment;
+                }
+                else
                 {
-                    // TODO(cjb): Actually parse this?
+                    return error.BadConditonStatment;
+                }
 
-                    var CondItr = std.mem.tokenize(u8, Cat.Conditions, " ");
-                    var CurrTok = CondItr.next() orelse "";
-                    if (std.mem.eql(u8, CurrTok, "TAG"))
-                    {
-                        var Truthiness: bool = undefined;
-                        {
-                            const TruthinessTok = CondItr.next() orelse "";
-                            if (std.mem.eql(u8, TruthinessTok, "TRUE"))
-                            {
-                                Truthiness = true;
-                            }
-                            else if (std.mem.eql(u8, TruthinessTok, "FALSE"))
-                            {
-                                Truthiness = false;
-                            }
-                            else
-                            {
-                                return error.BadConditonStatment;
-                            }
-                        }
+                var nBytesCopied = try sempy.Run(
+                    Self.PyCallbacks.items[@intCast(usize, Cat.MainPyModuleIndex)],
+                    Text,
+                    Match.SO,
+                    Match.EO,
+                    SempyRunBuf);
 
-                        if (!std.mem.eql(u8, CondItr.next() orelse "", "ON"))
-                        {
-                            return error.BadConditonStatment;
-                        }
+                try W.arrayElem();
+                try W.beginObject();
+                try W.objectField(Cat.Name);
+                try W.emitString(SempyRunBuf[0..nBytesCopied]);
 
-                        CurrTok = CondItr.next() orelse "";
+                // Spit out match indicies ( mostly for web client's benifit )
 
-                        // Bail if current token is 'NOT'
+                try W.objectField("SO");
+                try W.emitNumber(Match.SO);
+                try W.objectField("EO");
+                try W.emitNumber(Match.EO);
 
-                        if (std.mem.eql(u8, CurrTok, "NOT")) // TODO(cjb): Have categories convey
-                                                             //   this instead of embeding within the
-                                                             //   statment beacuse we are doing alot of
-                                                             //   work that we don't need to do.
-                        {
-                           continue;
-                        }
-
-                        if (CurrTok.len > 1 and CurrTok[0] == '#')
-                        {
-                            // If we can find this match in matchlist than continue
-                            const TargetPatternID =
-                                try std.fmt.parseUnsigned(c_ulonglong, CurrTok[1 .. ], 10);
-                            if (TargetPatternID + Cat.StartPatternID != Match.ID)
-                            {
-                                continue;
-                            }
-                        }
-                        else if (!std.mem.eql(u8, CurrTok, "*"))
-                        {
-                            return error.BadConditonStatment;
-                        }
-
-                        try W.arrayElem(); // NOTE(cjb): these are here because of the stupid
-                                           // continue a few lines above this comment.
-                        try W.beginObject();
-                        try W.objectField(Cat.Name);
-                        try W.emitBool(Truthiness);
-
-                        // Spit out match indicies ( mostly for web client's benifit )
-
-                        try W.objectField("SO");
-                        try W.emitNumber(Match.SO);
-                        try W.objectField("EO");
-                        try W.emitNumber(Match.EO);
-                    }
-                    else if (std.mem.eql(u8, CurrTok, "EXTRACT"))
-                    {
-                        if (!std.mem.eql(u8, CondItr.next() orelse "", "UNTIL"))
-                        {
-                            return error.BadConditonStatment;
-                        }
-
-                        // How much text is to be extracted? TODO(cjb): EOT condition?
-
-                        if (!std.mem.eql(u8, CondItr.next() orelse "", "OFFSET"))
-                        {
-                            return error.BadConditonStatment;
-                        }
-                        if (!std.mem.eql(u8, CondItr.next() orelse "", "="))
-                        {
-                            return error.BadConditonStatment;
-                        }
-
-                        CurrTok = CondItr.next() orelse "";
-                        if (std.mem.eql(u8, CurrTok, ""))
-                        {
-                            return error.BadConditonStatment;
-                        }
-
-                        var Offset = try std.fmt.parseUnsigned(c_ulonglong, CurrTok, 10);
-                        var GoodEO = Offset + Match.EO;
-                        if (GoodEO > Text.len)
-                        {
-                            GoodEO = Text.len;
-                        }
-
-                        if (!std.mem.eql(u8, CondItr.next() orelse "", "ON"))
-                        {
-                            return error.BadConditonStatment;
-                        }
-
-                        CurrTok = CondItr.next() orelse "";
-                        if (CurrTok.len > 1 and CurrTok[0] == '#')
-                        {
-                            const TargetPatternID =
-                                try std.fmt.parseUnsigned(c_ulonglong, CurrTok[1 .. ], 10);
-                            if (TargetPatternID + Cat.StartPatternID != Match.ID)
-                            {
-                                continue;
-                            }
-                        }
-                        else if (!std.mem.eql(u8, CurrTok, "*"))
-                        {
-                            return error.BadConditonStatment;
-                        }
-
-                        try W.arrayElem();
-                        try W.beginObject();
-                        try W.objectField(Cat.Name);
-                        try W.emitString(Text[Match.SO .. GoodEO]);
-
-                        // Spit out match indicies ( mostly for web client's benifit )
-
-                        try W.objectField("SO");
-                        try W.emitNumber(Match.SO);
-                        try W.objectField("EO");
-                        try W.emitNumber(Match.EO + Offset);
-                    }
-                    else
-                    {
-                        return error.BadConditonStatment;
-                    }
-                },
+                try W.endObject(); // End this category's JSON blurb.
             }
-
-            try W.endObject(); // End this category's JSON blurb.
         }
-
-        // Handle resolving categories that didn't match.
-
-        for (ExtractorDef.CatBoxes) |Cat, CatIndex|
-        {
-            if (CatsWithMatches.isSet(CatIndex))
-            {
-                continue;
-            }
-
-            switch (Cat.ResolvesWith)
-            {
-                .Script =>
-                {
-                    continue; // Ignoring scripts for now, May be a use case here?
-                },
-
-                .Conditions =>
-                {
-                    var CondItr = std.mem.tokenize(u8, Cat.Conditions, " ");
-                    var CurrTok = CondItr.next() orelse "";
-
-                    if (std.mem.eql(u8, CurrTok, "TAG"))
-                    {
-                        var Truthiness: bool = undefined;
-                        {
-                            const TruthinessTok = CondItr.next() orelse "";
-                            if (std.mem.eql(u8, TruthinessTok, "TRUE"))
-                            {
-                                Truthiness = true;
-                            }
-                            else if (std.mem.eql(u8, TruthinessTok, "FALSE"))
-                            {
-                                Truthiness = false;
-                            }
-                            else
-                            {
-                                return error.BadConditonStatment;
-                            }
-                        }
-
-                        if (!std.mem.eql(u8, CondItr.next() orelse "", "ON"))
-                        {
-                            return error.BadConditonStatment;
-                        }
-
-                        // If token isn't NOT than bail.
-
-                        if (!std.mem.eql(u8, CondItr.next() orelse "", "NOT"))
-                        {
-                            continue;
-                        }
-
-                        CurrTok = CondItr.next() orelse "";
-                        if (CurrTok.len > 1 and CurrTok[0] == '#')
-                        {
-                            const TargetPatternID =
-                                try std.fmt.parseUnsigned(c_ulonglong, CurrTok[1 .. ], 10);
-                            var FoundTargetPatternID = false;
-                            for (MatchList.items) |Match|
-                            {
-                                if (Match.ID == TargetPatternID + Cat.StartPatternID)
-                                {
-                                    FoundTargetPatternID = true;
-                                    break;
-                                }
-                            }
-                            if (FoundTargetPatternID)
-                            {
-                                continue;
-                            }
-                        }
-                        else if (!std.mem.eql(u8, CurrTok, "*"))
-                        {
-                            return error.BadConditonStatment;
-                        }
-
-                        try W.arrayElem();
-                        try W.beginObject();
-                        try W.objectField(Cat.Name);
-                        try W.emitBool(Truthiness);
-                    }
-                    else if (std.mem.eql(u8, CurrTok, "EXTRACT"))
-                    {
-                        continue; // Ignore extract condition because there is nothing to extract.
-                    }
-                    else
-                    {
-                        return error.BadConditonStatment;
-                    }
-                },
-            }
-
-            // Spit out match indicies ( mostly for web client's benifit )
-
-            try W.objectField("SO");
-            try W.emitNumber(0);
-            try W.objectField("EO");
-            try W.emitNumber(0);
-
-            try W.endObject(); // End this category's JSON blurb.
-        }
-
         try W.endArray(); // End extractor's list of JSON blurbs.
     }
     try W.endObject(); // End root JSON object.
