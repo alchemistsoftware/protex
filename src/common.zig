@@ -2,17 +2,12 @@
 // Artifact header structs
 //
 
-pub const arti_cat_resolves_with = enum(c_int)
-{
-    Script,
-    Conditions
-};
-
 /// Artifact category header
 pub const arti_cat_header = packed struct
 {
     nCategoryNameBytes: usize,
     nCategoryConditionBytes: usize,
+    MainPyModuleIndex: usize,
 };
 
 /// Artifact definition header
@@ -21,6 +16,7 @@ pub const arti_def_header = packed struct
     nExtractorNameBytes: usize,
     DatabaseSize: usize,
     nCategories: usize,
+    nPatterns: usize,
 };
 
 /// Artifact python module header
@@ -62,6 +58,7 @@ pub const arti_header = packed struct
 //     | N extractor name bytes (usize) |
 //     | N database bytes (usize)       |
 //     | N categories (usize)           |
+//     | N patterns (usize)             |
 //     |----Extraction context data-----|
 //     | Extractor name (nBytes)        |
 //     | HS database (nbytes)           |
@@ -73,9 +70,6 @@ pub const arti_header = packed struct
 //         |---------Category data----------|
 //         | Category name (nbytes)         |
 //         | Conditions (nbytes)            |
-//         | N patterns (usize)             |
-//         | Main py module index (isize)   |
-//         | ResolvesWith (c_int)           |
 //         *--------------------------------*
 //
 //         *--------Category header---------*

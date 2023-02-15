@@ -1,6 +1,11 @@
 module.exports = {
   packagerConfig: {},
   rebuildConfig: {},
+  hooks: {
+    generateAssets: async (forgeConfig, platform, arch) => {
+        // TODO(cjb): Everything you want copied...
+    }
+  },
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
@@ -9,10 +14,6 @@ module.exports = {
     {
       name: '@electron-forge/maker-zip',
       platforms: ['linux'],
-    },
-    {
-      name: '@electron-forge/maker-deb',
-      config: {},
     },
   ],
 };

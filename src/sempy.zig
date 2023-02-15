@@ -87,7 +87,7 @@ pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !self.callba
     defer c.Py_DECREF(Module);
 
     // Get function ptr to module's main
-    var MainFnPtr = c.PyObject_GetAttrString(Module, "main");
+    var MainFnPtr = c.PyObject_GetAttrString(Module, "protex_main");
     if (MainFnPtr == null)
     {
         self.PrintAndClearErr();
@@ -103,11 +103,12 @@ pub fn UnloadCallbackFn(Callback: self.callback_fn) void
     c.Py_DECREF(Callback.FnPtr);
 }
 
-pub fn Run(Callback: self.callback_fn, Text: []const u8, OutBuf: []u8) !usize
+pub fn Run(Callback: self.callback_fn, Text: []const u8, SO: c_ulonglong, EO: c_ulonglong,
+    OutBuf: []u8) !usize
 {
     var nBytesCopied: isize = undefined;
 
-    const Args = c.Py_BuildValue("(s#)", Text.ptr, @intCast(c.Py_ssize_t, Text.len));
+    const Args = c.Py_BuildValue("(s#KK)", Text.ptr, @intCast(c.Py_ssize_t, Text.len), SO, EO);
     if (Args == null)
     {
         self.PrintAndClearErr();

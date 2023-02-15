@@ -1,8 +1,33 @@
-# Gracie changelog
+# Protex changelog
 
 This project adheres to [semver](https://semver.org/)
 
-## [0.3.1-alpha] - unreleased
+## [0.4.0-alpha] - unreleased
+### Added
+- a Fox
+- Extract/Tag conditions can now specify specific patterns.
+- Script editing.
+- Dedicated pattern editing area.
+
+### Fixed
+- Text tabs/new-lines are now properly displayed.
+- Out of bounds index when using UNTIL OFFSET within a conditional statement.
+- App writing artifacts to wrong dir.
+
+### Removed
+- Generate config button and text that would appear because configurations are now written by main
+    thread instead of a web server.
+
+### Changed
+- Text scrollbars are now hidden
+- Project name is now "protex"
+- Extractor now allways resolves with a script.
+
+### Added
+- Pressing '~' during conditional statement editing now prompts an auto complete for the pattern
+    to include within the statement.
+
+## [0.3.1-alpha] - 02-08-23
 ### Removed
 - Country/Language inputs within config, and refrences within extractor and packager.
 
@@ -62,12 +87,12 @@ This project adheres to [semver](https://semver.org/)
 - Sempy run now writes to a utf8 encoded byte buffer rather than a wchar buffer.
 
 ### Fixed
-- Gracie unit test (again)
+- Extractor Unit test (again)
 - sempy init/deinit crash
 
 ## [0.0.4-alpha] - 01-04-23
 ### Fixed
-- Gracie unit test
+- Extractor Unit test
 - Memory leaks caused by moving off of a backing buffer.
 
 ### Added

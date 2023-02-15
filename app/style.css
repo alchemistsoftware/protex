@@ -42,17 +42,73 @@
     padding: 0;
     margin: 0;
 }
+
+#ab-box-container{
+    display: flex;
+    flex-direction: row;
+    height: 45vh;
+    max-height: 45vh;
+}
+
+.ab-item{
+    width: 50%;
+    display: flex;
+    flex-direction: column;
+}
+
 .noice{
     font-family: "FiraCode-SemiBold";
     background: #FFFFFF;
     color: #000000;
 }
-.pattern-input[IsSelected=true]{
-    outline: none;
-    border: 2px solid #212529;
-}
-#text-area,#span-text{
+
+#patterns-container{
+    width: 100%;
+    height: 50%;
     overflow-y: scroll;
+    display: flex;
+    flex-direction: column;
+}
+
+#script-editing-ta{
+    width: 100%;
+    height: 50%;
+    border: none;
+    overflow-y: scroll;
+}
+
+.pattern-entry{
+    display: flex
+    flex-direction: row;
+}
+.pattern-input{
+    width: 95%;
+    outline: none;
+    border: none;
+    outline: none;
+    color: #FFFFFF;
+    background-color: #000000;
+    font-family: "FiraCode-Light";
+}
+.pattern-input[IsSelected=true]{
+    background-color: #111111;
+}
+button.pattern-entry-button{
+    color: #FFFFFF;
+    background-color: #000000;
+    border: none;
+}
+#text-area,#pre-text{
+    white-space: pre-wrap;
+    overflow-y: scroll;
+    border: none;
+    outline: none;
+    resize: none;
+    width: 100%;
+    height: 100%;
+}
+pre::-webkit-scrollbar,textarea::-webkit-scrollbar,div::-webkit-scrollbar {
+  display: none;
 }
 
 body,textarea {
@@ -63,7 +119,14 @@ input,button{
     font-family: "FiraCode-Regular";
 }
 .bottomright {
-  position: absolute;
-  bottom: 8px;
-  right: 16px;
+    font-family: "FiraCode-Light";
+    position: absolute;
+    bottom: 1%;
+    right: 1%;
+}
+.bottomleft {
+    font-family: "FiraCode-Light";
+    position: absolute;
+    bottom: 1%;
+    left: 1%;
 }

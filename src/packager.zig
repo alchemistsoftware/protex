@@ -150,35 +150,25 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
             IDs.deinit();
         }
 
-        // Each category has an associated python plugin file path as well as a few patterns which
-        //  are specific to a given category. For patterns this logic simply writes to the realavent
-        //  list used during the hs_compile_multi call.
+        // Parse JSON patterns
 
-        var Categories = Extractor.Object.get("Categories") orelse unreachable;
-        for (Categories.Array.items) |Category|
+        const JSONPatterns = Extractor.Object.get("Patterns") orelse unreachable;
+        for (JSONPatterns.Array.items) |Pattern, PatternIndex|
         {
+            // Allocate space for pattern + termiantor, copy existing pattern and drop in
+            //  the termination byte.
+            // NOTE(cjb): HS expects a null terminated string...
 
-            // Parse JSON patterns
+            var PatternBuf = try Ally.alloc(u8, Pattern.String.len + 1);
+            std.mem.copy(u8, PatternBuf, Pattern.String);
+            PatternBuf[Pattern.String.len] = 0;
 
-            const nExistingPatterns = PatternsZ.items.len;
-            const JSONPatterns = Category.Object.get("Patterns") orelse unreachable;
-            for (JSONPatterns.Array.items) |Pattern, PatternIndex|
-            {
-                // Allocate space for pattern + termiantor, copy existing pattern and drop in
-                //  the termination byte.
-                // NOTE(cjb): HS expects a null terminated string...
+            // Append pattern, flag and it's id.
 
-                var PatternBuf = try Ally.alloc(u8, Pattern.String.len + 1);
-                std.mem.copy(u8, PatternBuf, Pattern.String);
-                PatternBuf[Pattern.String.len] = 0;
-
-                // Append pattern, flag and it's id.
-
-                try PatternsZ.append(PatternBuf[0.. Pattern.String.len :0]);
-                try Flags.append(c.HS_FLAG_DOTALL | c.HS_FLAG_CASELESS |
-                    c.HS_FLAG_SOM_LEFTMOST | c.HS_FLAG_UTF8);
-                try IDs.append(@intCast(c_uint, PatternIndex + nExistingPatterns));
-            }
+            try PatternsZ.append(PatternBuf[0.. Pattern.String.len :0]);
+            try Flags.append(c.HS_FLAG_DOTALL | c.HS_FLAG_CASELESS |
+                c.HS_FLAG_SOM_LEFTMOST | c.HS_FLAG_UTF8);
+            try IDs.append(@intCast(c_uint, PatternIndex));
         }
 
         // Compile and serialize hyperscan database
@@ -213,11 +203,13 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
 // Write extractor definition header and it's data. Then proceed to write the category
 // headers and their data as well.
 //
+        const Categories = Extractor.Object.get("Categories") orelse unreachable;
         const ExtractorName = Extractor.Object.get("Name") orelse unreachable;
         const DefHeader = common.arti_def_header{
             .nExtractorNameBytes = ExtractorName.String.len,
             .DatabaseSize = nSerializedDBBytes,
             .nCategories = Categories.Array.items.len,
+            .nPatterns = PatternsZ.items.len
         };
         try ArtiF.writer().writeStruct(DefHeader);
         try ArtiF.writeAll(ExtractorName.String);
@@ -225,60 +217,45 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
 
         for (Categories.Array.items) |Cat|
         {
-            const Patterns = Cat.Object.get("Patterns") orelse unreachable;
             const CatName = Cat.Object.get("Name") orelse unreachable;
-            const ResolvesWith = Cat.Object.get("ResolvesWith") orelse unreachable;
+            const Conditions = Cat.Object.get("Conditions") orelse unreachable;
 
-            if (std.mem.eql(u8, ResolvesWith.String, "script"))
+            var CondItr = std.mem.tokenize(u8, Conditions.String, " ");
+            while (CondItr.next()) |Tok|
             {
-                // Read module name and compute index of MainPyModule within PyModuleNames.
-
-                const MainPyModule = Cat.Object.get("MainPyModule") orelse unreachable;
-                const MainPyModuleNoExt = std.fs.path.stem(MainPyModule.String);
-                var MainModuleIndex: isize = undefined;
-                for (PyModuleNames.items) |ModuleName, ModuleIndex|
+                if (std.mem.eql(u8, Tok, "CALL"))
                 {
-                    if (std.mem.eql(u8, MainPyModuleNoExt, ModuleName))
-                    {
-                        MainModuleIndex = @intCast(isize, ModuleIndex);
-                    }
+                    break;
                 }
-                std.debug.assert(MainModuleIndex != -1);
-
-                const CatHeader = common.arti_cat_header{
-                    .nCategoryNameBytes = CatName.String.len,
-                    .nCategoryConditionBytes = 0,
-                };
-
-                try ArtiF.writer().writeStruct(CatHeader);
-                try ArtiF.writeAll(CatName.String);
-                try ArtiF.writeAll(@ptrCast([*]const u8, &Patterns.Array.items.len)[0 .. @sizeOf(usize)]);
-                try ArtiF.writeAll(@ptrCast([*]const u8, &MainModuleIndex)[0 .. @sizeOf(isize)]);
-                try ArtiF.writeAll(@ptrCast([*]const u8, &common.arti_cat_resolves_with.Script)[0 .. @sizeOf(c_int)]);
             }
-            else if (std.mem.eql(u8, ResolvesWith.String, "conditions"))
+
+            // Next conditr should be name of python plugin
+
+            const ScriptName = CondItr.next() orelse "";
+            const NoExtScriptName = std.fs.path.stem(ScriptName);
+
+            // Read module name and compute index of MainPyModule within PyModuleNames.
+
+            var MainModuleIndex: isize = -1;
+            for (PyModuleNames.items) |ModuleName, ModuleIndex|
             {
-                const MainModuleIndex: isize = -1;
-                const Conditions = Cat.Object.get("Conditions") orelse unreachable;
-                const CatHeader = common.arti_cat_header{
-                    .nCategoryNameBytes = CatName.String.len,
-                    .nCategoryConditionBytes = Conditions.String.len,
-                };
-
-                try ArtiF.writer().writeStruct(CatHeader);
-                try ArtiF.writeAll(CatName.String);
-                try ArtiF.writeAll(Conditions.String);
-                try ArtiF.writeAll(@ptrCast([*]const u8, &Patterns.Array.items.len)[0 .. @sizeOf(usize)]);
-                try ArtiF.writeAll(@ptrCast([*]const u8, &MainModuleIndex)[0 .. @sizeOf(isize)]);
-                try ArtiF.writeAll(@ptrCast([*]const u8, &common.arti_cat_resolves_with.Conditions)[0 .. @sizeOf(c_int)]);
+                if (std.mem.eql(u8, NoExtScriptName, ModuleName))
+                {
+                    MainModuleIndex = @intCast(isize, ModuleIndex);
+                    break;
+                }
             }
-            else
-            {
-                std.log.err("Category '{s}' has invalid ResolvesWith: {s}",
-                    .{CatName.String, ResolvesWith.String});
-                return error.InvalidResolvesWith;
-            }
+            std.debug.assert(MainModuleIndex >= 0);
 
+            const CatHeader = common.arti_cat_header{
+                .nCategoryNameBytes = CatName.String.len,
+                .nCategoryConditionBytes = Conditions.String.len,
+                .MainPyModuleIndex = @intCast(usize, MainModuleIndex),
+            };
+
+            try ArtiF.writer().writeStruct(CatHeader);
+            try ArtiF.writeAll(CatName.String);
+            try ArtiF.writeAll(Conditions.String);
         }
     }
 }

@@ -25,25 +25,52 @@ process.on('uncaughtException', (Err: any) =>
     console.log(Err);
 });
 
-electron.ipcMain.handle("get-py-include-path", async (Event: any) =>
+electron.ipcMain.handle("read-script", async (Event: any, ScriptName: string) =>
 {
-    console.log("<<<\nget-py-include-path");
+    console.log("<<<\nread-script");
 
-    let Result: py_include_path_and_entries = {
-        PyIncludePath: ConfRelPluginsPath, // TODO(cjb): Hide this from user??
-        Entries: [],
-    };
+    return new Promise<string>((Resolve) =>
+    {
+        fs.readFile(`${DataPath}/${ConfRelPluginsPath}/${ScriptName}`,
+            "utf8", (Err: Error, Data: string) =>
+        {
+            if (Err) throw Err;
+            console.log(`>>>\n${Data}`);
+            Resolve(Data);
+        });
+    });
+});
 
-    return new Promise((Resolve) =>
+electron.ipcMain.handle("write-script", async (Event: any, Name: string, Src: string) =>
+{
+    console.log("<<<\nwrite-script");
+
+    return new Promise<void>((Resolve) =>
+    {
+        const Bytes = new Uint8Array(Buffer.from(Src));
+        fs.writeFile(`${DataPath}/${ConfRelPluginsPath}/${Name}`, Bytes, (Err: Error) =>
+        {
+            if (Err) throw Err;
+            console.log(`Done writing ${DataPath}/${ConfRelPluginsPath}/${Name}`);
+            Resolve();
+        });
+    });
+});
+
+electron.ipcMain.handle("get-script-names", async (Event: any) =>
+{
+    console.log("<<<\nget-script-names");
+
+    let Result: string[] = [];
+
+    return new Promise<string[]>((Resolve) =>
     {
         fs.readdir(`${DataPath}/${ConfRelPluginsPath}`, (Err: Error, Files: string[]) =>
         {
             if (Err) throw Err;
-            Result.Entries = Files.slice(0);
+            Result = Files.slice(0);
 
-            console.log(">>>");
-            console.log(Result);
-
+            console.log(`>>>\n${Result}`);
             Resolve(Result);
         });
     });
@@ -56,7 +83,8 @@ electron.ipcMain.handle(
     {
         console.log("<<<\nrun-extractor");
 
-        const ArtiOutPath = path.parse(`${DataPath}/${ConfName}`).name + '.bin';
+        const ArtiOutPath = `${DataPath}/` + path.parse(ConfName).name + '.bin';
+        console.log(ArtiOutPath);
         const Packager = spawn(`${BinPath}/packager`, [`${DataPath}/${ConfName}`, ArtiOutPath]);
         Packager.stdout.on("data", (Out: Buffer | string) =>
         {
@@ -99,9 +127,11 @@ electron.ipcMain.handle("write-config", async (Event: any, ConfigStr: string) =>
 
     return new Promise<void>((Resolve) =>
     {
-        const Config = JSON.parse(ConfigStr);
+        let Config = JSON.parse(ConfigStr);
+        Config.PyIncludePath = ConfRelPluginsPath;
+        const ModifiedConfigStr = JSON.stringify(Config);
 
-        const Bytes = new Uint8Array(Buffer.from(ConfigStr));
+        const Bytes = new Uint8Array(Buffer.from(ModifiedConfigStr));
         fs.writeFile(`${DataPath}/${Config.ConfName}`, Bytes, (Err: Error) =>
         {
             if (Err) throw Err;
@@ -111,21 +141,29 @@ electron.ipcMain.handle("write-config", async (Event: any, ConfigStr: string) =>
     });
 });
 
-const createWindow = () =>
+const CreateWindow = () =>
 {
-    const win = new electron.BrowserWindow({
+
+    // Query primary display to find min width/height
+
+    const Display = electron.screen.getPrimaryDisplay();
+    const MinWidth = Math.floor(Display.size.width / 3);
+    const MinHeight = Math.floor(Display.size.height / 3);
+
+    const Win = new electron.BrowserWindow({
         autoHideMenuBar: true,
-        width: 800,
-        height: 600,
+        width: MinWidth,
+        height: MinHeight,
         webPreferences: {
             preload: path.join(__dirname, "preload.js")
         }
     });
+    Win.setMinimumSize(MinWidth, MinHeight);
 
-    win.loadFile(path.join(__dirname, "../index.html"));
+    Win.loadFile(path.join(__dirname, "../index.html"));
 }
 
 electron.app.whenReady().then(() =>
 {
-    createWindow();
+    CreateWindow();
 })

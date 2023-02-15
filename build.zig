@@ -5,34 +5,34 @@ pub fn build(B: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const Mode = B.standardReleaseOptions();
 
-    const Gracie = B.addSharedLibrary("gracie", "src/gracie.zig", B.version(0, 1, 1));
-    Gracie.setBuildMode(Mode);
-    Gracie.setOutputDir("./lib");
-    Gracie.addIncludePath("/usr/include/hs/");
-    Gracie.addIncludePath("./src");
-    Gracie.addIncludePath("/usr/include/python3.11");
-    Gracie.linkSystemLibrary("python3.11");
-    Gracie.linkSystemLibrary("pthread");
-    Gracie.linkSystemLibrary("dl");
-    Gracie.linkSystemLibrary("util");
-    Gracie.linkSystemLibrary("m");
-    Gracie.linkSystemLibrary("hs_runtime");
-    Gracie.linkLibC();
-    Gracie.install();
+    const Protex = B.addSharedLibrary("protex", "src/protex.zig", B.version(0, 5, 0));
+    Protex.setBuildMode(Mode);
+    Protex.setOutputDir("./lib");
+    Protex.addIncludePath("/usr/include/hs/");
+    Protex.addIncludePath("./src");
+    Protex.addIncludePath("/usr/include/python3.11");
+    Protex.linkSystemLibrary("python3.11");
+    Protex.linkSystemLibrary("pthread");
+    Protex.linkSystemLibrary("dl");
+    Protex.linkSystemLibrary("util");
+    Protex.linkSystemLibrary("m");
+    Protex.linkSystemLibrary("hs_runtime");
+    Protex.linkLibC();
+    Protex.install();
 
-    const GracieTests = B.addTest("src/gracie.zig");
-    GracieTests.setBuildMode(Mode);
-    GracieTests.setOutputDir("./bin");
-    GracieTests.addIncludePath("/usr/include/hs/");
-    GracieTests.addIncludePath("./src");
-    GracieTests.addIncludePath("/usr/include/python3.11");
-    GracieTests.linkSystemLibrary("python3.11");
-    GracieTests.linkSystemLibrary("pthread");
-    GracieTests.linkSystemLibrary("dl");
-    GracieTests.linkSystemLibrary("util");
-    GracieTests.linkSystemLibrary("m");
-    GracieTests.linkSystemLibrary("hs_runtime");
-    GracieTests.linkLibC();
+    const ProtexTests = B.addTest("src/protex.zig");
+    ProtexTests.setBuildMode(Mode);
+    ProtexTests.setOutputDir("./bin");
+    ProtexTests.addIncludePath("/usr/include/hs/");
+    ProtexTests.addIncludePath("./src");
+    ProtexTests.addIncludePath("/usr/include/python3.11");
+    ProtexTests.linkSystemLibrary("python3.11");
+    ProtexTests.linkSystemLibrary("pthread");
+    ProtexTests.linkSystemLibrary("dl");
+    ProtexTests.linkSystemLibrary("util");
+    ProtexTests.linkSystemLibrary("m");
+    ProtexTests.linkSystemLibrary("hs_runtime");
+    ProtexTests.linkLibC();
 
     const SlabaTests = B.addTest("src/slab_allocator.zig");
     SlabaTests.setBuildMode(Mode);
@@ -49,7 +49,7 @@ pub fn build(B: *std.build.Builder) void {
     const TestStep = B.step("test", "Run library tests");
     TestStep.dependOn(&SlabaTests.step);
     TestStep.dependOn(&SempyTests.step);
-    TestStep.dependOn(&GracieTests.step);
+    TestStep.dependOn(&ProtexTests.step);
 
     // Packager exe
 
@@ -68,6 +68,6 @@ pub fn build(B: *std.build.Builder) void {
     CAPICheck.setBuildMode(Mode);
     CAPICheck.install();
     CAPICheck.linkLibC();
-    CAPICheck.linkLibrary(Gracie);
+    CAPICheck.linkLibrary(Protex);
     CAPICheck.addCSourceFiles(&.{"src/capi_io.c",}, &.{"-g",});
 }
