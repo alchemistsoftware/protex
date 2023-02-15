@@ -43,6 +43,20 @@
     margin: 0;
 }
 
+#toolbar-container{
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    background-color: #1f1f23;
+}
+.toolbar-item{
+    padding: 0px 8px 0px 8px;
+    font-family: "FiraCode-Light";
+}
+.toolbar-item:hover{
+    background-color: #3e3e40;
+}
+
 #ab-box-container{
     display: flex;
     flex-direction: row;

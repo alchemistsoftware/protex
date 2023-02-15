@@ -196,6 +196,11 @@ function PopulatePyModuleSelectOptions(S: protex_state, Selector: HTMLSelectElem
 {
     Selector.innerText = "";
 
+    const AddScriptButton = document.createElement("option");
+    AddScriptButton.text = "New Script";
+    AddScriptButton.value = "New Script";
+    Selector.add(AddScriptButton);
+
     const PyEntries = S.ScriptNames;
     let SelectIndex = -1;
     PyEntries.forEach((PyModule, PyModuleIndex) =>
@@ -205,10 +210,11 @@ function PopulatePyModuleSelectOptions(S: protex_state, Selector: HTMLSelectElem
         PyModuleNameOption.text = PyModule;
         if (PyModule === SelectText)
         {
-            SelectIndex = PyModuleIndex;
+            SelectIndex = PyModuleIndex + 1;
         }
         Selector.add(PyModuleNameOption);
     });
+
     Selector.selectedIndex = SelectIndex;
 }
 
@@ -367,6 +373,37 @@ function RegexifyLiteral(Str: string): string
     return EscapeRegex(Str.toLowerCase());
 }
 
+function GetUserInput(): Promise<string>
+{
+    function FinishedInput(InputElem: HTMLInputElement): Promise<void>
+    {
+        return new Promise<void>((Resolve) => {
+            InputElem.onkeypress = (E: KeyboardEvent) => {
+                if (E.key === "Enter")
+                {
+                    Resolve();
+                }
+            }
+        });
+    }
+
+    return new Promise<string>((Resolve) => {
+        const UserInput = document.createElement("input");
+        UserInput.style.position = "fixed";
+        UserInput.style.left = "50%";
+        UserInput.style.top = "50%";
+        UserInput.style.transform = "translate(-50%, -50%)";
+        document.body.appendChild(UserInput);
+        UserInput.focus();
+        FinishedInput(UserInput).then(() =>
+        {
+            const Result = UserInput.value;
+            UserInput.remove();
+            Resolve(Result);
+        });
+    });
+}
+
 const ConfName = "webs_conf.json"; //TODO(cjb): Make this a texbox
 
 //
@@ -386,6 +423,109 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     {
         throw "Couldn't get acontainer element";
     }
+
+    const ToolbarContainer = document.createElement("div");
+    ToolbarContainer.id = "toolbar-container";
+    AContainer.appendChild(ToolbarContainer);
+
+    // Import existing configuration input
+    const ImportConfigInput = document.createElement("input");
+    ImportConfigInput.id = "import-config-input";
+    ImportConfigInput.setAttribute("accept", ".json");
+    ImportConfigInput.type = "file";
+    ImportConfigInput.style.display = "none";
+    ImportConfigInput.onchange = (E) => ImportJSONConfig(S, E);
+    ToolbarContainer.appendChild(ImportConfigInput);
+
+    const ImportConfigTab = document.createElement("div");
+    ImportConfigTab.tabIndex = 0;
+    ImportConfigTab.className = "toolbar-item";
+    ImportConfigTab.onkeypress = (E: KeyboardEvent) =>
+    {
+        if (E.key === "Enter")
+        {
+            ImportConfigInput.click()
+        }
+    };
+    ImportConfigTab.onclick = () => ImportConfigInput.click();
+    ImportConfigTab.innerText = "Import";
+    ToolbarContainer.appendChild(ImportConfigTab);
+
+    const RunExtractorButton = document.createElement("button");
+    RunExtractorButton.style.display = "none";
+    RunExtractorButton.onclick = () =>
+    {
+        const ConfigStr = GenJSONConfig(S);
+        ProtexWindow.ProtexAPI.WriteConfig(ConfigStr).then(() =>
+        {
+            ProtexWindow.ProtexAPI.RunExtractor(ConfName, TA.value)
+                .then((ExtractorOut: any) =>
+            {
+                console.log(ExtractorOut);
+            });
+        });
+    }
+    ToolbarContainer.appendChild(RunExtractorButton);
+
+    const RunExtractorTab = document.createElement("div");
+    RunExtractorTab.onkeypress = (E: KeyboardEvent) =>
+    {
+        if (E.key === "Enter")
+        {
+            RunExtractorButton.click()
+        }
+    };
+    RunExtractorTab.onclick = () => RunExtractorButton.click();
+    RunExtractorTab.tabIndex = 0;
+    RunExtractorTab.className = "toolbar-item";
+    RunExtractorTab.innerText = "Run";
+    ToolbarContainer.appendChild(RunExtractorTab);
+
+    const ActiveScriptSelect = document.createElement("select");
+    ActiveScriptSelect.onchange = () => {
+        let NewScriptName = ActiveScriptSelect.value;
+        if (NewScriptName === "New Script")
+        {
+            GetUserInput().then((Result) => {
+                NewScriptName = Result;
+
+                if (NewScriptName === "")
+                {
+                    return;
+                }
+
+                ScriptEditingTA.value =
+                    `def protex_main(text: str, so: int, eo: int) -> str:\n    return ""`;
+                ScriptEditingTA.setAttribute("name", NewScriptName);
+                ProtexWindow.ProtexAPI.WriteScript(NewScriptName, ScriptEditingTA.value)
+                    .then(() =>
+                {
+                    ProtexWindow.ProtexAPI.GetScriptNames()
+                        .then((Result: string[]) =>
+                    {
+                        S.ScriptNames = Result.slice(0);
+                        PopulatePyModuleSelectOptions(S, ActiveScriptSelect, NewScriptName);
+                    });
+                });
+            });
+        }
+        else // Didn't select 'New Script'
+        {
+            const OldScriptName = ScriptEditingTA.getAttribute("name");
+            if (OldScriptName !== null)
+            {
+                ProtexWindow.ProtexAPI.WriteScript((OldScriptName as string), ScriptEditingTA.value);
+            }
+
+            ProtexWindow.ProtexAPI.ReadScript(NewScriptName).then((Result: string) =>
+            {
+                ScriptEditingTA.setAttribute("name", NewScriptName);
+                ScriptEditingTA.value = Result;
+            });
+        }
+    };
+    PopulatePyModuleSelectOptions(S, ActiveScriptSelect, "");
+    ToolbarContainer.appendChild(ActiveScriptSelect);
 
     const ABBoxContainer = document.createElement("div");
     ABBoxContainer.id = "ab-box-container";
@@ -478,66 +618,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     }
     ABox.appendChild(PreText);
 
-    // Import existing configuration input
-    const ImportConfigLabel = document.createElement("label");
-    ImportConfigLabel.setAttribute("for", "import-config-input");
-    ImportConfigLabel.innerText = "Import config:";
-    AContainer.appendChild(ImportConfigLabel);
 
-    const ImportConfigInput = document.createElement("input");
-    ImportConfigInput.id = "import-config-input";
-    ImportConfigInput.type = "file";
-    ImportConfigInput.onchange = (E) => ImportJSONConfig(S, E);
-    AContainer.appendChild(ImportConfigInput);
-
-    const ScriptControlsContainer = document.createElement("div");
-    AContainer.appendChild(ScriptControlsContainer);
-
-    const ScriptNameInput = document.createElement("input");
-    ScriptControlsContainer.appendChild(ScriptNameInput);
-
-    const ActiveScriptSelect = document.createElement("select");
-    ActiveScriptSelect.onchange = () => {
-        const NewScriptName = ActiveScriptSelect.value;
-
-        const OldScriptName = ScriptEditingTA.getAttribute("name");
-        if (OldScriptName !== null)
-        {
-            ProtexWindow.ProtexAPI.WriteScript((OldScriptName as string), ScriptEditingTA.value);
-        }
-
-        ProtexWindow.ProtexAPI.ReadScript(NewScriptName).then((Result: string) =>
-        {
-            ScriptEditingTA.setAttribute("name", NewScriptName);
-            ScriptEditingTA.value = Result;
-        });
-    };
-    PopulatePyModuleSelectOptions(S, ActiveScriptSelect, "");
-
-    const AddScriptButton = document.createElement("button");
-    AddScriptButton.innerText = "New script";
-    AddScriptButton.onclick = () =>
-    {
-        const ScriptName = ScriptNameInput.value;
-        if (ScriptName === "")
-        {
-            return;
-        }
-        ScriptNameInput.value = "";
-
-        ScriptEditingTA.value =
-            `def protex_main(text: str, so: int, eo: int) -> str:\n    return ""`;
-        ScriptEditingTA.setAttribute("name", ScriptName);
-        ProtexWindow.ProtexAPI.WriteScript(ScriptName, ScriptEditingTA.value);
-        ProtexWindow.ProtexAPI.GetScriptNames()
-            .then((Result: string[]) =>
-        {
-            S.ScriptNames = Result.slice(0);
-            PopulatePyModuleSelectOptions(S, ActiveScriptSelect, ScriptName);
-        });
-    };
-    ScriptControlsContainer.appendChild(AddScriptButton);
-    ScriptControlsContainer.appendChild(ActiveScriptSelect);
 
     const NewExtrDefFieldsContainer = document.createElement("div");
     NewExtrDefFieldsContainer.id = "new-extr-def-fields-container";
@@ -566,29 +647,6 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     DocSectionsContainer.id = "doc-sections-container";
     AContainer.appendChild(DocSectionsContainer);
 
-    const RunExtractor = document.createElement("button");
-    RunExtractor.innerText = "Run extractor";
-    RunExtractor.onclick = () =>
-    {
-        const ConfigStr = GenJSONConfig(S);
-        ProtexWindow.ProtexAPI.WriteConfig(ConfigStr).then(() =>
-        {
-            ProtexWindow.ProtexAPI.RunExtractor(ConfName, TA.value)
-                .then((ExtractorOut: any) =>
-            {
-                console.log(ExtractorOut);
-            });
-        });
-    }
-    AContainer.appendChild(RunExtractor);
-
-    const DEBUGGenConfig = document.createElement("button");
-    DEBUGGenConfig.innerText = "DEBUG GEN CONFIG";
-    DEBUGGenConfig.onclick = () =>
-    {
-        const ConfigStr = GenJSONConfig(S);
-    }
-    AContainer.appendChild(DEBUGGenConfig);
 
     const AutoCompleteMenu = document.createElement("menu");
     AutoCompleteMenu.id = "auto-complete-menu";
@@ -618,7 +676,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
      \\_   /__/  \\/
      _/  __   __/
     /___/____/
-    v0.4.0-alpha
+    v0.4.1-alpha
     `;
     AContainer.appendChild(AsciiFox4Motivation);
 }); // GetPyModule
