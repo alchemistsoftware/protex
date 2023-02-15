@@ -3,5 +3,6 @@ data/
 lib/
 app/node_modules/
 app/package-lock.json
+app/out
 zig-cache/
 app/src/*.js
