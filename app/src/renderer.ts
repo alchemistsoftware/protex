@@ -4,14 +4,22 @@ interface py_include_path_and_entries
     Entries: string[],
 }
 
-function AddEmptyCat(S: protex_state, ExtrDefItem: HTMLElement): void
+function AddEmptyCat(S: protex_state, ExtrDefItem: HTMLElement, ExtractorIndex: number): void
 {
-    AddCat(S, ExtrDefItem, "", "", "", "", []);
+    AddCat(S, ExtrDefItem, "", "", "", "", [], ExtractorIndex);
 }
 
+//TODO(cjb): Get category/conditions in toolbar as well.
 function AddCat(S: protex_state, ExtrDefItem: HTMLElement, Name: string, ResolvesWith: string,
-    Conditions: string, MainPyModule: string, Patterns: string[]): void
+    Conditions: string, MainPyModule: string, Patterns: string[], ExtractorIndex: number): void
 {
+    let Cat = {
+        Name: Name,
+        Conditions: Conditions,
+    };
+    S.Extractors[ExtractorIndex].Categories.push(Cat);
+    S.Extractors[ExtractorIndex].Patterns = Patterns.slice(0);
+
     const CategoryFieldsContainer = document.createElement("div");
     CategoryFieldsContainer.className = "cat-fields-container";
     ExtrDefItem.appendChild(CategoryFieldsContainer);
@@ -86,10 +94,6 @@ function AddCat(S: protex_state, ExtrDefItem: HTMLElement, Name: string, Resolve
 
 }
 
-interface protex_state
-{
-    ScriptNames: string[];
-};
 
 function LastSelectedPatternInput(): HTMLInputElement | null
 {
@@ -166,27 +170,47 @@ function AddExtr(S: protex_state, ExtrName: string): HTMLElement
         throw "Couldn't get div with id 'extr-defs-container'";
     }
 
+    const NewExtractorOption = document.createElement("option");
+    NewExtractorOption.text = ExtrName;
+    NewExtractorOption.value = ExtrName;
+    const ExtractorSelect = TryGetElementByID("extractor-select") as HTMLSelectElement;
+    ExtractorSelect.add(NewExtractorOption);
+
+    // Now select new option
+
+    let OptionIndex = 0;
+    for (let Option of ExtractorSelect.options)
+    {
+        if (Option.value === ExtrName)
+        {
+            ExtractorSelect.selectedIndex = OptionIndex;
+        }
+        OptionIndex += 1;
+    }
+
     const ExtrDefItem = document.createElement("div");
     ExtrDefItem.className = "extr-def-item";
     ExtrDefsContainer.appendChild(ExtrDefItem);
 
-    const NewExtrNameInput = document.createElement("input") as HTMLInputElement;
-    NewExtrNameInput.className = "extr-name-input";
-    NewExtrNameInput.value = ExtrName;
-    ExtrDefItem.appendChild(NewExtrNameInput);
+    const NewExtrDef: extr_def = {
+        Name: ExtrName,
+        Categories: [],
+        Patterns: [],
+    };
+    S.Extractors.push(NewExtrDef);
 
     const AddCategoryButton = document.createElement("button");
     AddCategoryButton.innerText = "New category";
-    AddCategoryButton.onclick = () => AddEmptyCat(S, ExtrDefItem);
+    AddCategoryButton.onclick = () => AddEmptyCat(S, ExtrDefItem, S.Extractors.length - 1);
     ExtrDefItem.appendChild(AddCategoryButton);
 
-    const RemoveExtractorButton = document.createElement("button");
-    RemoveExtractorButton.innerText = "Remove Extractor";
-    RemoveExtractorButton.onclick = () =>
-    {
-        ExtrDefItem.remove();
-    };
-    ExtrDefItem.appendChild(RemoveExtractorButton);
+//    const RemoveExtractorButton = document.createElement("button");
+//    RemoveExtractorButton.innerText = "Remove Extractor";
+//    RemoveExtractorButton.onclick = () =>
+//    {
+//        ExtrDefItem.remove();
+//    };
+//    ExtrDefItem.appendChild(RemoveExtractorButton);
 
     return ExtrDefItem;
 }
@@ -231,17 +255,15 @@ interface extr_def
     Patterns: string[],
 };
 
-interface protex_config
-{
-    PyIncludePath: string,
-    ExtractorDefinitions: extr_def[],
-};
-
-//  Give window an ProtexAPI property so I don't have to cast it as any.
-
 interface protex_window extends Window
 {
     ProtexAPI: any
+};
+
+interface protex_state
+{
+    ScriptNames: string[],
+    Extractors: extr_def[],
 };
 
 const ProtexWindow = window as unknown as protex_window;
@@ -290,17 +312,19 @@ function ImportJSONConfig(S: protex_state, E: Event): void
     {
         const PatternsContainer = TryGetElementByID("patterns-container");
         const JSONConfig = JSON.parse(Text);
+        let ExtrDefIndex = 0;
         for (const ExtrDef of JSONConfig.ExtractorDefinitions)
         {
             const ExtrDefElem = AddExtr(S, ExtrDef.Name);
             for (const Cat of ExtrDef.Categories)
                 AddCat(S, ExtrDefElem, Cat.Name, Cat.ResolvesWith, Cat.Conditions, Cat.MainPyModule,
-                       Cat.Patterns);
+                       Cat.Patterns, ExtrDefIndex);
 
             for (const P of ExtrDef.Patterns)
             {
                 AddPattern(S, PatternsContainer, P);
             }
+            ExtrDefIndex += 1;
         }
     });
 }
@@ -378,9 +402,14 @@ function GetUserInput(): Promise<string>
     function FinishedInput(InputElem: HTMLInputElement): Promise<void>
     {
         return new Promise<void>((Resolve) => {
-            InputElem.onkeypress = (E: KeyboardEvent) => {
+            InputElem.onkeyup = (E: KeyboardEvent) => {
                 if (E.key === "Enter")
                 {
+                    Resolve();
+                }
+                else if (E.key === "Escape")
+                {
+                    InputElem.value = "";
                     Resolve();
                 }
             }
@@ -411,6 +440,8 @@ const ConfName = "webs_conf.json"; //TODO(cjb): Make this a texbox
 //
 
 let S = {} as protex_state;
+S.Extractors = [];
+S.ScriptNames = [];
 
 ProtexWindow.ProtexAPI.GetScriptNames()
     .then((Result: string[]) =>
@@ -482,6 +513,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     ToolbarContainer.appendChild(RunExtractorTab);
 
     const ActiveScriptSelect = document.createElement("select");
+    let PrevSelectedScriptIndex = -1;
     ActiveScriptSelect.onchange = () => {
         let NewScriptName = ActiveScriptSelect.value;
         if (NewScriptName === "New Script")
@@ -491,8 +523,12 @@ ProtexWindow.ProtexAPI.GetScriptNames()
 
                 if (NewScriptName === "")
                 {
+                    // Make selected option nothing if it's just new script option.
+
+                    ActiveScriptSelect.selectedIndex = PrevSelectedScriptIndex;
                     return;
                 }
+                PrevSelectedScriptIndex = ActiveScriptSelect.selectedIndex;
 
                 ScriptEditingTA.value =
                     `def protex_main(text: str, so: int, eo: int) -> str:\n    return ""`;
@@ -511,6 +547,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         }
         else // Didn't select 'New Script'
         {
+            PrevSelectedScriptIndex = ActiveScriptSelect.selectedIndex;
             const OldScriptName = ScriptEditingTA.getAttribute("name");
             if (OldScriptName !== null)
             {
@@ -526,6 +563,37 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     };
     PopulatePyModuleSelectOptions(S, ActiveScriptSelect, "");
     ToolbarContainer.appendChild(ActiveScriptSelect);
+
+    const ExtractorSelect = document.createElement("select");
+    ExtractorSelect.id = "extractor-select";
+    let PrevSelectedExtractorIndex = -1;
+    ExtractorSelect.onchange = () =>
+    {
+        if (ExtractorSelect.value === "New Extractor")
+        {
+            GetUserInput().then((Result) => {
+                const NewExtractorName = Result;
+                if (NewExtractorName === "")
+                {
+                    ExtractorSelect.selectedIndex = PrevSelectedExtractorIndex;
+                    return;
+                }
+                PrevSelectedExtractorIndex = ActiveScriptSelect.selectedIndex;
+                AddExtr(S, NewExtractorName);
+            });
+        }
+        else // Otherwise switch extractors
+        {
+            PrevSelectedExtractorIndex = ActiveScriptSelect.selectedIndex;
+        }
+    }
+    const AddExtractorOption = document.createElement("option");
+    AddExtractorOption.text = "New Extractor";
+    AddExtractorOption.value = "New Extractor";
+    ExtractorSelect.add(AddExtractorOption);
+
+    ExtractorSelect.selectedIndex = -1;
+    ToolbarContainer.appendChild(ExtractorSelect);
 
     const ABBoxContainer = document.createElement("div");
     ABBoxContainer.id = "ab-box-container";
@@ -617,27 +685,6 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         TA.focus();
     }
     ABox.appendChild(PreText);
-
-
-
-    const NewExtrDefFieldsContainer = document.createElement("div");
-    NewExtrDefFieldsContainer.id = "new-extr-def-fields-container";
-    AContainer.appendChild(NewExtrDefFieldsContainer);
-
-    const ExtrNameInput = document.createElement("input");
-    ExtrNameInput.id = "extr-name-input";
-    NewExtrDefFieldsContainer.appendChild(ExtrNameInput);
-
-    const AddExtrButton = document.createElement("button");
-    AddExtrButton.innerText = "New extractor";
-    AddExtrButton.onclick = () =>
-    {
-        AddExtr(S, ExtrNameInput.value);
-
-        // Reset inputs
-        ExtrNameInput.value = "";
-    };
-    NewExtrDefFieldsContainer.appendChild(AddExtrButton);
 
     const ExtrDefsContainer = document.createElement("div");
     ExtrDefsContainer.id = "extr-defs-container";
