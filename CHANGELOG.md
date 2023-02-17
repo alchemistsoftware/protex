@@ -2,7 +2,12 @@
 
 This project adheres to [semver](https://semver.org/)
 
-## [0.4.0-alpha] - unreleased
+## [0.4.1-alpha] - 02-16-23
+### Added
+- Toolbar and actions changing what is displayed to the user ( example: target specific extractor
+  to work on ).
+
+## [0.4.0-alpha] - 02-14-23
 ### Added
 - a Fox
 - Extract/Tag conditions can now specify specific patterns.
