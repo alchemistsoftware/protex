@@ -47,14 +47,16 @@
     display: flex;
     flex-direction: row;
     width: 100%;
-    background-color: #1f1f23;
+    background-color: #FFFFFF;
+    color: #000000;
 }
 .toolbar-item{
     padding: 0px 8px 0px 8px;
-    font-family: "FiraCode-Light";
+    font-size: small;
+    font-family: "FiraCode-Regular";
 }
 .toolbar-item:hover{
-    background-color: #3e3e40;
+    background-color: #EEEEEE;
 }
 
 #ab-box-container{
