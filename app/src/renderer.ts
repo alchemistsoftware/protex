@@ -1,5 +1,4 @@
 const ProtexWindow = window as unknown as protex_window;
-//TODO(cjb): Move Add's to end of selectors...
 
 interface cat_def
 {
@@ -183,18 +182,31 @@ function AddPattern(Pattern: string): void
     PatternEntry.appendChild(RemovePatternButton);
 }
 
-function AddEmptyExtr(Extrs: extr_def[], ExtrName: string): void
+function AddExtrSelectOption(ExtrName: string): void
 {
-    AddExtr(Extrs, ExtrName, [], []);
-}
-
-function AddExtr(Extrs: extr_def[], ExtrName: string, Patterns: string[], Cats: cat_def[]): void
-{
-    const NewExtractorOption = document.createElement("option");
-    NewExtractorOption.text = ExtrName;
-    NewExtractorOption.value = ExtrName;
     const ExtractorSelect = TryGetElementByID("extractor-select") as HTMLSelectElement;
-    ExtractorSelect.add(NewExtractorOption);
+    for (const Option of ExtractorSelect.options)
+    {
+        if (Option.value === "New Extractor")
+        {
+            Option.remove();
+            break;
+        }
+    }
+
+    // Add the created extractor
+
+    const ExtractorOption = document.createElement("option");
+    ExtractorOption.text = ExtrName;
+    ExtractorOption.value = ExtrName;
+    ExtractorSelect.add(ExtractorOption);
+
+    // Add back "New Extractor" option
+
+    const AddExtractorOption = document.createElement("option");
+    AddExtractorOption.text = "New Extractor";
+    AddExtractorOption.value = "New Extractor";
+    ExtractorSelect.add(AddExtractorOption);
 
     // Now select new option
 
@@ -207,24 +219,27 @@ function AddExtr(Extrs: extr_def[], ExtrName: string, Patterns: string[], Cats: 
         }
         OptionIndex += 1;
     }
+}
 
-    const NewExtrDef: extr_def = {
+function AddEmptyExtr(Extrs: extr_def[], ExtrName: string): void
+{
+    AddExtr(Extrs, ExtrName, [], []);
+}
+
+function AddExtr(Extrs: extr_def[], ExtrName: string, Patterns: string[], Cats: cat_def[]): void
+{
+    AddExtrSelectOption(ExtrName);
+    Extrs.push({
         Name: ExtrName,
         Categories: Cats.slice(0),
         Patterns: Patterns.slice(0),
-    };
-    Extrs.push(NewExtrDef) - 1;
+    });
 }
 
 function PopulatePyModuleSelectOptions(ScriptNames: string[], Selector: HTMLSelectElement,
     SelectText: string): void
 {
     Selector.innerText = "";
-
-    const AddScriptButton = document.createElement("option");
-    AddScriptButton.text = "New Script";
-    AddScriptButton.value = "New Script";
-    Selector.add(AddScriptButton);
 
     const PyEntries = S.ScriptNames;
     let SelectIndex = -1;
@@ -235,14 +250,18 @@ function PopulatePyModuleSelectOptions(ScriptNames: string[], Selector: HTMLSele
         PyModuleNameOption.text = PyModule;
         if (PyModule === SelectText)
         {
-            SelectIndex = PyModuleIndex + 1;
+            SelectIndex = PyModuleIndex;
         }
         Selector.add(PyModuleNameOption);
     });
 
+    const AddScriptButton = document.createElement("option");
+    AddScriptButton.text = "New Script";
+    AddScriptButton.value = "New Script";
+    Selector.add(AddScriptButton);
+
     Selector.selectedIndex = SelectIndex;
 }
-
 
 function TryGetElementByClassName(ParentElem: Element, ClassName: string,
     Index: number): HTMLElement
@@ -283,14 +302,8 @@ function ImportJSONConfig(S: protex_state, E: Event): void
     Files[0].text().then(Text =>
     {
         S.Extractors = [];
-
         const ExtractorSelect = TryGetElementByID("extractor-select") as HTMLSelectElement;
         ExtractorSelect.innerHTML = "";
-        const AddExtractorOption = document.createElement("option");
-        AddExtractorOption.text = "New Extractor";
-        AddExtractorOption.value = "New Extractor";
-        ExtractorSelect.add(AddExtractorOption);
-        ExtractorSelect.selectedIndex = -1;
 
         const JSONConfig = JSON.parse(Text);
         let ExtrDefIndex = 0;
@@ -320,6 +333,12 @@ function ImportJSONConfig(S: protex_state, E: Event): void
 
             ExtrDefIndex += 1;
         }
+
+        const AddExtractorOption = document.createElement("option");
+        AddExtractorOption.text = "New Extractor";
+        AddExtractorOption.value = "New Extractor";
+        ExtractorSelect.add(AddExtractorOption);
+        ExtractorSelect.selectedIndex = -1;
     });
 }
 
@@ -470,6 +489,14 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     RunExtractorButton.style.display = "none";
     RunExtractorButton.onclick = () =>
     {
+        // Make sure to save script in TA
+
+        const ScriptName = ScriptEditingTA.getAttribute("name");
+        if (ScriptName !== null)
+        {
+            ProtexWindow.ProtexAPI.WriteScript((ScriptName as string), ScriptEditingTA.value);
+        }
+
         const ConfigStr = GenJSONConfig(S.Extractors);
         ProtexWindow.ProtexAPI.WriteConfig(ConfigStr).then(() =>
         {
@@ -553,9 +580,10 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     let PrevSelectedExtractorIndex = -1;
     ExtractorSelect.onchange = async () =>
     {
-        if (PrevSelectedExtractorIndex > 0)
+        if ((PrevSelectedExtractorIndex !== -1) &&
+            (PrevSelectedExtractorIndex !== ExtractorSelect.length - 1))
         {
-            const ExtrToSave  = S.Extractors[PrevSelectedExtractorIndex - 1];
+            const ExtrToSave  = S.Extractors[PrevSelectedExtractorIndex];
             ExtrToSave.Categories = [];
             ExtrToSave.Patterns = []
 
@@ -604,7 +632,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
             PatternEntry.remove();
         }
 
-        if (ExtractorSelect.value === "New Extractor") // !== 0
+        if (ExtractorSelect.value === "New Extractor")
         {
             await GetUserInput().then((Result) => {
                 const NewExtractorName = Result;
@@ -615,11 +643,11 @@ ProtexWindow.ProtexAPI.GetScriptNames()
                     // NOTE(cjb): Because we are allways removing cat dom elements if you cancel
                     // adding an extractor restore it's dom elements.
 
-                    for (const Cat of S.Extractors[ExtractorSelect.selectedIndex - 1].Categories)
+                    for (const Cat of S.Extractors[ExtractorSelect.selectedIndex].Categories)
                     {
                         NewCatFields(Cat.Name, Cat.Conditions);
                     }
-                    for (const P of S.Extractors[ExtractorSelect.selectedIndex - 1].Patterns)
+                    for (const P of S.Extractors[ExtractorSelect.selectedIndex].Patterns)
                     {
                         AddPattern(P);
                     }
@@ -637,15 +665,15 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         }
         else // Otherwise switch extractors
         {
-            for (const Cat of S.Extractors[ExtractorSelect.selectedIndex - 1].Categories)
+            for (const Cat of S.Extractors[ExtractorSelect.selectedIndex].Categories)
             {
                 NewCatFields(Cat.Name, Cat.Conditions);
             }
-            for (const P of S.Extractors[ExtractorSelect.selectedIndex - 1].Patterns)
+            for (const P of S.Extractors[ExtractorSelect.selectedIndex].Patterns)
             {
                 AddPattern(P);
             }
-    }
+        }
 
         PrevSelectedExtractorIndex = ExtractorSelect.selectedIndex;
     }
@@ -752,7 +780,22 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     const AddCategoryButton = document.createElement("button");
     AddCategoryButton.className = "add-category-button";
     AddCategoryButton.innerText = "New category";
-    AddCategoryButton.onclick = () => AddEmptyCat(S.Extractors[ExtractorSelect.selectedIndex - 1]);
+    AddCategoryButton.onclick = () =>
+    {
+        if (S.Extractors.length > 0) // Have at least 1 extractor?
+        {
+            AddEmptyCat(S.Extractors[ExtractorSelect.selectedIndex]);
+        }
+        else // TODO(cjb): Actually save categories and patterns to anon extractor def.
+        {
+            const FakeExtr: extr_def = {
+                Name: "fakiemcfake",
+                Patterns: [],
+                Categories: []
+            };
+            AddEmptyCat(FakeExtr);
+        }
+    }
     AContainer.appendChild(AddCategoryButton);
 
     const AutoCompleteMenu = document.createElement("menu");
@@ -783,7 +826,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
      \\_   /__/  \\/
      _/  __   __/
     /___/____/
-    v0.4.1-alpha
+    v0.5.0-alpha
     `;
     AContainer.appendChild(AsciiFox4Motivation);
 }); // GetPyModule
