@@ -1,32 +1,37 @@
-interface py_include_path_and_entries
-{
-    PyIncludePath: string,
-    Entries: string[],
-}
+const ProtexWindow = window as unknown as protex_window;
+//TODO(cjb): Move Add's to end of selectors...
 
-function AddEmptyCat(S: protex_state, ExtrDefItem: HTMLElement, ExtractorIndex: number): void
+interface cat_def
 {
-    AddCat(S, ExtrDefItem, "", "", "", "", [], ExtractorIndex);
-}
+    Name: string,
+    Conditions: string,
+};
 
-//TODO(cjb): Get category/conditions in toolbar as well.
-function AddCat(S: protex_state, ExtrDefItem: HTMLElement, Name: string, ResolvesWith: string,
-    Conditions: string, MainPyModule: string, Patterns: string[], ExtractorIndex: number): void
+interface extr_def
 {
-    let Cat = {
-        Name: Name,
-        Conditions: Conditions,
-    };
-    S.Extractors[ExtractorIndex].Categories.push(Cat);
-    S.Extractors[ExtractorIndex].Patterns = Patterns.slice(0);
+    Name: string,
+    Categories: cat_def[],
+    Patterns: string[],
+};
 
-    const CategoryFieldsContainer = document.createElement("div");
-    CategoryFieldsContainer.className = "cat-fields-container";
-    ExtrDefItem.appendChild(CategoryFieldsContainer);
+interface protex_window extends Window
+{
+    ProtexAPI: any
+};
+
+interface protex_state
+{
+    ScriptNames: string[],
+    Extractors: extr_def[],
+};
+
+function NewCatFields(Name: string, Conditions: string): void
+{
+    const AContainer = TryGetElementByID("a-container");
 
     const CategoryFieldsItem = document.createElement("div");
     CategoryFieldsItem.className = "cat-fields-item";
-    CategoryFieldsContainer.appendChild(CategoryFieldsItem);
+    AContainer.appendChild(CategoryFieldsItem);
 
     const CategoryNameInput = document.createElement("input");
     CategoryNameInput.className = "cat-name-input";
@@ -91,7 +96,22 @@ function AddCat(S: protex_state, ExtrDefItem: HTMLElement, Name: string, Resolve
         CategoryFieldsItem.remove();
     };
     CategoryFieldsItem.appendChild(RemoveCategoryButton);
+}
 
+function AddEmptyCat(ExtrDef: extr_def): void
+{
+    AddCat(ExtrDef, "", "");
+}
+
+//TODO(cjb): Get category/conditions in toolbar as well.
+function AddCat(ExtrDef: extr_def, Name: string, Conditions: string): void
+{
+    let Cat = {
+        Name: Name,
+        Conditions: Conditions,
+    };
+    ExtrDef.Categories.push(Cat);
+    NewCatFields(Name, Conditions);
 }
 
 
@@ -137,9 +157,11 @@ function UpdateSelectedPattern(TargetPatternInput: HTMLInputElement): void
     PreText.innerHTML = SpanifiedText;
 }
 
-function AddPattern(S: protex_state, PatternsContainer: HTMLElement, Pattern: string): void
+function AddPattern(Pattern: string): void
 {
-    const PatternEntry = document.createElement("dib");
+    const PatternsContainer = TryGetElementByID("patterns-container");
+
+    const PatternEntry = document.createElement("div");
     PatternEntry.className = "pattern-entry";
     PatternsContainer.appendChild(PatternEntry);
 
@@ -156,20 +178,18 @@ function AddPattern(S: protex_state, PatternsContainer: HTMLElement, Pattern: st
     RemovePatternButton.innerText = "-";
     RemovePatternButton.onclick = () =>
     {
-        PatternInput.remove();
-        RemovePatternButton.remove();
+        PatternEntry.remove();
     }
     PatternEntry.appendChild(RemovePatternButton);
 }
 
-function AddExtr(S: protex_state, ExtrName: string): HTMLElement
+function AddEmptyExtr(Extrs: extr_def[], ExtrName: string): void
 {
-    const ExtrDefsContainer = document.getElementById("extr-defs-container");
-    if (ExtrDefsContainer == null)
-    {
-        throw "Couldn't get div with id 'extr-defs-container'";
-    }
+    AddExtr(Extrs, ExtrName, [], []);
+}
 
+function AddExtr(Extrs: extr_def[], ExtrName: string, Patterns: string[], Cats: cat_def[]): void
+{
     const NewExtractorOption = document.createElement("option");
     NewExtractorOption.text = ExtrName;
     NewExtractorOption.value = ExtrName;
@@ -188,34 +208,15 @@ function AddExtr(S: protex_state, ExtrName: string): HTMLElement
         OptionIndex += 1;
     }
 
-    const ExtrDefItem = document.createElement("div");
-    ExtrDefItem.className = "extr-def-item";
-    ExtrDefsContainer.appendChild(ExtrDefItem);
-
     const NewExtrDef: extr_def = {
         Name: ExtrName,
-        Categories: [],
-        Patterns: [],
+        Categories: Cats.slice(0),
+        Patterns: Patterns.slice(0),
     };
-    S.Extractors.push(NewExtrDef);
-
-    const AddCategoryButton = document.createElement("button");
-    AddCategoryButton.innerText = "New category";
-    AddCategoryButton.onclick = () => AddEmptyCat(S, ExtrDefItem, S.Extractors.length - 1);
-    ExtrDefItem.appendChild(AddCategoryButton);
-
-//    const RemoveExtractorButton = document.createElement("button");
-//    RemoveExtractorButton.innerText = "Remove Extractor";
-//    RemoveExtractorButton.onclick = () =>
-//    {
-//        ExtrDefItem.remove();
-//    };
-//    ExtrDefItem.appendChild(RemoveExtractorButton);
-
-    return ExtrDefItem;
+    Extrs.push(NewExtrDef) - 1;
 }
 
-function PopulatePyModuleSelectOptions(S: protex_state, Selector: HTMLSelectElement,
+function PopulatePyModuleSelectOptions(ScriptNames: string[], Selector: HTMLSelectElement,
     SelectText: string): void
 {
     Selector.innerText = "";
@@ -242,31 +243,6 @@ function PopulatePyModuleSelectOptions(S: protex_state, Selector: HTMLSelectElem
     Selector.selectedIndex = SelectIndex;
 }
 
-interface cat_def
-{
-    Name: string,
-    Conditions: string,
-};
-
-interface extr_def
-{
-    Name: string,
-    Categories: cat_def[],
-    Patterns: string[],
-};
-
-interface protex_window extends Window
-{
-    ProtexAPI: any
-};
-
-interface protex_state
-{
-    ScriptNames: string[],
-    Extractors: extr_def[],
-};
-
-const ProtexWindow = window as unknown as protex_window;
 
 function TryGetElementByClassName(ParentElem: Element, ClassName: string,
     Index: number): HTMLElement
@@ -298,10 +274,6 @@ function ImportJSONConfig(S: protex_state, E: Event): void
         throw "Bad event target";
     }
 
-    // Clear out current definitions if any.
-    const ExtrDefsContainer = TryGetElementByID("extr-defs-container");
-    ExtrDefsContainer.innerHTML = "";
-
     // Get first file ( should  only be one anyway )
     const Files = ((E.target as HTMLInputElement).files as FileList);
     if (Files.length == 0)
@@ -310,70 +282,82 @@ function ImportJSONConfig(S: protex_state, E: Event): void
     }
     Files[0].text().then(Text =>
     {
-        const PatternsContainer = TryGetElementByID("patterns-container");
+        S.Extractors = [];
+
+        const ExtractorSelect = TryGetElementByID("extractor-select") as HTMLSelectElement;
+        ExtractorSelect.innerHTML = "";
+        const AddExtractorOption = document.createElement("option");
+        AddExtractorOption.text = "New Extractor";
+        AddExtractorOption.value = "New Extractor";
+        ExtractorSelect.add(AddExtractorOption);
+        ExtractorSelect.selectedIndex = -1;
+
         const JSONConfig = JSON.parse(Text);
         let ExtrDefIndex = 0;
         for (const ExtrDef of JSONConfig.ExtractorDefinitions)
         {
-            const ExtrDefElem = AddExtr(S, ExtrDef.Name);
-            for (const Cat of ExtrDef.Categories)
-                AddCat(S, ExtrDefElem, Cat.Name, Cat.ResolvesWith, Cat.Conditions, Cat.MainPyModule,
-                       Cat.Patterns, ExtrDefIndex);
-
-            for (const P of ExtrDef.Patterns)
+            if (ExtrDefIndex === 0)
             {
-                AddPattern(S, PatternsContainer, P);
+                AddExtr(S.Extractors, ExtrDef.Name, ExtrDef.Patterns, ExtrDef.Categories);
+                for (const Cat of ExtrDef.Categories)
+                {
+                    AddCat(S.Extractors[ExtrDefIndex], Cat.Name, Cat.Conditions);
+                }
+
+                for (const P of ExtrDef.Patterns)
+                {
+                    AddPattern(P);
+                }
             }
+            else
+            {
+                S.Extractors.push({
+                    Name: ExtrDef.Name,
+                    Categories: ExtrDef.Categories.slice(0),
+                    Patterns: ExtrDef.Patterns.slice(0)
+                });
+            }
+
             ExtrDefIndex += 1;
         }
     });
 }
 
-function GenJSONConfig(S: protex_state): string
+function GenJSONConfig(Extractors: extr_def[]): string
 {
+    let CurrentExtractor = (TryGetElementByID("extractor-select") as HTMLSelectElement).value;
     let ExtrDefs: extr_def[] = [];
-    const ExtrDefsContainer = TryGetElementByID("extr-defs-container");
-    for (const ExtrDefItem of ExtrDefsContainer.children)
+    Extractors.map((ExtrDef) =>
     {
-        const NameInput = TryGetElementByClassName(
-            ExtrDefItem, "extr-name-input", 0) as HTMLInputElement;
-
-        const PatternsContainer = TryGetElementByID("patterns-container");
-        let Patterns: string[] = [];
-        for (const Elem of PatternsContainer.getElementsByClassName("pattern-input"))
+        if (ExtrDef.Name === CurrentExtractor)  // Use DOM elements
         {
-            Patterns.push((Elem as HTMLInputElement).value);
-        }
+            ExtrDef.Patterns = [];
+            const PatternsContainer = TryGetElementByID("patterns-container");
+            for (const Elem of PatternsContainer.getElementsByClassName("pattern-input"))
+            {
+                ExtrDef.Patterns.push((Elem as HTMLInputElement).value);
+            }
 
-        let CatDefs: cat_def[] = [];
-        for (const CatFieldsContainer of ExtrDefItem.getElementsByClassName("cat-fields-container"))
-        {
-            for (const CatItem of CatFieldsContainer.children)
+            ExtrDef.Categories = [];
+            for (const CatItem of document.getElementsByClassName("cat-fields-item"))
             {
                 const CatNameInput = TryGetElementByClassName(
                     CatItem, "cat-name-input", 0) as HTMLInputElement;
                 const ConditionsInput = TryGetElementByClassName(
                     CatItem, "conditions-input", 0) as HTMLInputElement;
 
-                CatDefs.push({
+                ExtrDef.Categories.push({
                     Name: CatNameInput.value,
                     Conditions: ConditionsInput.value,
                 });
             }
         }
-
-        const NewExtrDef: extr_def = {
-            Name: (NameInput as HTMLInputElement).value,
-            Categories: CatDefs,
-            Patterns: Patterns
-        };
-        ExtrDefs.push(NewExtrDef);
-    }
+    });
 
     console.log({ConfName: ConfName,
-        ExtractorDefinitions: ExtrDefs});
+        ExtractorDefinitions: Extractors});
     return JSON.stringify({ConfName: ConfName,
-        ExtractorDefinitions: ExtrDefs});
+        ExtractorDefinitions: Extractors});
 }
 
 function EscapeRegex(Regex: string): string
@@ -397,7 +381,7 @@ function RegexifyLiteral(Str: string): string
     return EscapeRegex(Str.toLowerCase());
 }
 
-function GetUserInput(): Promise<string>
+async function GetUserInput(): Promise<string>
 {
     function FinishedInput(InputElem: HTMLInputElement): Promise<void>
     {
@@ -486,7 +470,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     RunExtractorButton.style.display = "none";
     RunExtractorButton.onclick = () =>
     {
-        const ConfigStr = GenJSONConfig(S);
+        const ConfigStr = GenJSONConfig(S.Extractors);
         ProtexWindow.ProtexAPI.WriteConfig(ConfigStr).then(() =>
         {
             ProtexWindow.ProtexAPI.RunExtractor(ConfName, TA.value)
@@ -540,7 +524,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
                         .then((Result: string[]) =>
                     {
                         S.ScriptNames = Result.slice(0);
-                        PopulatePyModuleSelectOptions(S, ActiveScriptSelect, NewScriptName);
+                        PopulatePyModuleSelectOptions(S.ScriptNames, ActiveScriptSelect, NewScriptName);
                     });
                 });
             });
@@ -561,32 +545,111 @@ ProtexWindow.ProtexAPI.GetScriptNames()
             });
         }
     };
-    PopulatePyModuleSelectOptions(S, ActiveScriptSelect, "");
+    PopulatePyModuleSelectOptions(S.ScriptNames, ActiveScriptSelect, "");
     ToolbarContainer.appendChild(ActiveScriptSelect);
 
     const ExtractorSelect = document.createElement("select");
     ExtractorSelect.id = "extractor-select";
     let PrevSelectedExtractorIndex = -1;
-    ExtractorSelect.onchange = () =>
+    ExtractorSelect.onchange = async () =>
     {
-        if (ExtractorSelect.value === "New Extractor")
+        if (PrevSelectedExtractorIndex > 0)
         {
-            GetUserInput().then((Result) => {
+            const ExtrToSave  = S.Extractors[PrevSelectedExtractorIndex - 1];
+            ExtrToSave.Categories = [];
+            ExtrToSave.Patterns = []
+
+            const PatternsContainer = TryGetElementByID("patterns-container");
+            let Patterns: string[] = [];
+            for (const Elem of PatternsContainer.getElementsByClassName("pattern-input"))
+            {
+                Patterns.push((Elem as HTMLInputElement).value);
+            }
+            ExtrToSave.Patterns = Patterns.slice(0);
+
+            const CatItems = document.getElementsByClassName("cat-fields-item");
+            let CatItemIndex = 0;
+            for (const CatItem of CatItems)
+            {
+                const CatNames = document.getElementsByClassName("cat-name-input");
+                if (CatItemIndex >= CatNames.length)
+                {
+                    break;
+                }
+
+                const Conditionses = document.getElementsByClassName("conditions-input");
+                if (CatItemIndex >= Conditionses.length)
+                {
+                    break;
+                }
+
+                ExtrToSave.Categories.push({
+                    Name: (CatNames[CatItemIndex] as HTMLInputElement).value,
+                    Conditions: (Conditionses[CatItemIndex] as HTMLInputElement).value
+                });
+
+                CatItemIndex += 1
+            }
+        }
+
+        // Remove old DOM elements
+
+        const CategoryFieldItems = document.getElementsByClassName("cat-fields-item");
+        for (const CatItem of CategoryFieldItems)
+        {
+            CatItem.remove();
+        }
+        for (const PatternEntry of PatternsContainer.getElementsByClassName("pattern-entry"))
+        {
+            PatternEntry.remove();
+        }
+
+        if (ExtractorSelect.value === "New Extractor") // !== 0
+        {
+            await GetUserInput().then((Result) => {
                 const NewExtractorName = Result;
                 if (NewExtractorName === "")
                 {
                     ExtractorSelect.selectedIndex = PrevSelectedExtractorIndex;
+
+                    // NOTE(cjb): Because we are allways removing cat dom elements if you cancel
+                    // adding an extractor restore it's dom elements.
+
+                    for (const Cat of S.Extractors[ExtractorSelect.selectedIndex - 1].Categories)
+                    {
+                        NewCatFields(Cat.Name, Cat.Conditions);
+                    }
+                    for (const P of S.Extractors[ExtractorSelect.selectedIndex - 1].Patterns)
+                    {
+                        AddPattern(P);
+                    }
                     return;
                 }
-                PrevSelectedExtractorIndex = ActiveScriptSelect.selectedIndex;
-                AddExtr(S, NewExtractorName);
+
+                const PatternsContainer = TryGetElementByID("patterns-container");
+                let Patterns: string[] = [];
+                for (const Elem of PatternsContainer.getElementsByClassName("pattern-input"))
+                {
+                    Patterns.push((Elem as HTMLInputElement).value);
+                }
+                AddExtr(S.Extractors, NewExtractorName, Patterns, []);
             });
         }
         else // Otherwise switch extractors
         {
-            PrevSelectedExtractorIndex = ActiveScriptSelect.selectedIndex;
-        }
+            for (const Cat of S.Extractors[ExtractorSelect.selectedIndex - 1].Categories)
+            {
+                NewCatFields(Cat.Name, Cat.Conditions);
+            }
+            for (const P of S.Extractors[ExtractorSelect.selectedIndex - 1].Patterns)
+            {
+                AddPattern(P);
+            }
     }
+
+        PrevSelectedExtractorIndex = ExtractorSelect.selectedIndex;
+    }
+
     const AddExtractorOption = document.createElement("option");
     AddExtractorOption.text = "New Extractor";
     AddExtractorOption.value = "New Extractor";
@@ -630,7 +693,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     const AddPatternButton = document.createElement("button");
     AddPatternButton.innerText = "+";
     AddPatternButton.className = "pattern-entry-button";
-    AddPatternButton.onclick = () => AddPattern(S, PatternsContainer, "");
+    AddPatternButton.onclick = () => AddPattern("");
     PatternsContainer.appendChild(AddPatternButton);
 
     // Document's text area
@@ -686,14 +749,11 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     }
     ABox.appendChild(PreText);
 
-    const ExtrDefsContainer = document.createElement("div");
-    ExtrDefsContainer.id = "extr-defs-container";
-    AContainer.appendChild(ExtrDefsContainer);
-
-    const DocSectionsContainer = document.createElement("div");
-    DocSectionsContainer.id = "doc-sections-container";
-    AContainer.appendChild(DocSectionsContainer);
-
+    const AddCategoryButton = document.createElement("button");
+    AddCategoryButton.className = "add-category-button";
+    AddCategoryButton.innerText = "New category";
+    AddCategoryButton.onclick = () => AddEmptyCat(S.Extractors[ExtractorSelect.selectedIndex - 1]);
+    AContainer.appendChild(AddCategoryButton);
 
     const AutoCompleteMenu = document.createElement("menu");
     AutoCompleteMenu.id = "auto-complete-menu";
