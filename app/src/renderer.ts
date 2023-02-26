@@ -24,93 +24,261 @@ interface protex_state
     Extractors: extr_def[],
 };
 
-function NewCatFields(Name: string, Conditions: string): void
+function Assert(ExprTruthiness: boolean, DEBUGMsg: string): void
 {
-    const AContainer = TryGetElementByID("a-container");
-
-    const CategoryFieldsItem = document.createElement("div");
-    CategoryFieldsItem.className = "cat-fields-item";
-    AContainer.appendChild(CategoryFieldsItem);
-
-    const CategoryNameInput = document.createElement("input");
-    CategoryNameInput.className = "cat-name-input";
-    CategoryNameInput.value = Name;
-    CategoryFieldsItem.appendChild(CategoryNameInput);
-
-    const ConditionsInput = document.createElement("input");
-    ConditionsInput.className = "conditions-input";
-    ConditionsInput.value = Conditions;
-    ConditionsInput.addEventListener("keydown", (E: Event) =>
+    if (!ExprTruthiness)
     {
-        const InputE = (E as KeyboardEvent);
-        if (InputE.key === '~')
-        {
-            E.preventDefault();
+        const DEBUGTextInfoElem = TryGetElementByID("debug-text-info");
+        const PrevDEBUGTextInfo = DEBUGTextInfoElem.innerText;
 
-            const AutoCompleteMenu = TryGetElementByID("auto-complete-menu");
-            AutoCompleteMenu.innerHTML = "";
-            const PatternsContainer = TryGetElementByID("patterns-container");
-            let EntryIndex = 0;
-            for (const Elem of PatternsContainer
-                 .getElementsByClassName("pattern-input"))
-            {
-                const AutoCompleteEntry = document.createElement("li");
-                AutoCompleteEntry.setAttribute("tabIndex", "0");
-                AutoCompleteEntry.style.display = "inline-block";
-                AutoCompleteEntry.style.padding = "1px 5px"
-                AutoCompleteEntry.innerText = (Elem as HTMLInputElement).value;
-                AutoCompleteEntry.value = EntryIndex;
-                EntryIndex += 1;
-                AutoCompleteEntry.addEventListener("keyup", (E: Event) =>
-                {
-                    E.preventDefault();
-                    if ((E as KeyboardEvent).key === "Enter")
-                    {
-                        const OptSelectionStart = ConditionsInput.selectionStart;
-                        if (OptSelectionStart !== null)
-                        {
-                            const SelectionStart = OptSelectionStart as number;
-                            ConditionsInput.value = ConditionsInput.value.slice(0, SelectionStart) +
-                                `#${AutoCompleteEntry.value}` +
-                                ConditionsInput.value.slice(SelectionStart);
-                        }
-                        AutoCompleteMenu.innerHTML = "";
-                        ConditionsInput.focus();
-                    }
-                });
-                AutoCompleteMenu.appendChild(AutoCompleteEntry);
-            }
-            if (EntryIndex > 0)
-            {
-                (AutoCompleteMenu.children[0] as HTMLElement).focus();
-            }
-        }
-    });
-    CategoryFieldsItem.appendChild(ConditionsInput);
+        DEBUGTextInfoElem.innerText = "Assert Fail: " + DEBUGMsg;
+        setTimeout(() => {DEBUGTextInfoElem.innerText = PrevDEBUGTextInfo; }, 3000);
 
-    const RemoveCategoryButton = document.createElement("button");
-    RemoveCategoryButton.innerText = "Remove Category";
-    RemoveCategoryButton.onclick = () =>
-    {
-        CategoryFieldsItem.remove();
-    };
-    CategoryFieldsItem.appendChild(RemoveCategoryButton);
+        throw DEBUGMsg;
+    }
 }
 
-function AddEmptyCat(ExtrDef: extr_def): void
+function MakeDraggableLine(Elmnt: HTMLElement): void
 {
-    AddCat(ExtrDef, "", "");
+    const CategoryContainer = TryGetElementByID("category-container");
+    const SVGCategoryMask = TryGetElementByID("svg-category-mask");
+
+    let ConnecterLine: SVGLineElement;
+
+    Elmnt.onmousedown = DragMouseDown;
+
+    function DragMouseDown(E: MouseEvent): void
+    {
+        E = E || window.event;
+        const X = E.clientX - CategoryContainer.offsetLeft;
+        const Y = E.clientY - CategoryContainer.offsetTop;
+
+        ConnecterLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        ConnecterLine.setAttribute("x1", `${X}`);
+        ConnecterLine.setAttribute("y1", `${Y}`);
+        ConnecterLine.setAttribute("x2", `${X}`);
+        ConnecterLine.setAttribute("y2", `${Y}`);
+        ConnecterLine.setAttribute("stroke-width", "2");
+        ConnecterLine.setAttribute("stroke", "white");
+        SVGCategoryMask.appendChild(ConnecterLine);
+
+        document.onmouseup = EndLineDrag;
+        document.onmousemove = ElementDrag;
+    }
+    function ElementDrag(E: MouseEvent)
+    {
+        E = E || window.event;
+        E.preventDefault();
+
+        const X = E.clientX - CategoryContainer.offsetLeft;
+        const Y = E.clientY - CategoryContainer.offsetTop;
+
+        ConnecterLine.setAttribute("x2", `${X}`);
+        ConnecterLine.setAttribute("y2", `${Y}`);
+    }
+
+    // Clean up
+
+    function EndLineDrag(ME: MouseEvent): void
+    {
+        ME.preventDefault();
+
+        document.onmouseup = null;
+        document.onmousemove = null;
+
+        if (ME.target !== null)
+        {
+            if ((ME.target as HTMLElement).className === "draggable-container-connecter-left")
+            {
+                const nSVGLines = document.getElementsByTagName("line").length;
+                Assert(nSVGLines > 0, "nSVG lines was 0");
+                (ME.target as HTMLElement).setAttribute("LineIndex", `${nSVGLines - 1}`);
+                Elmnt.setAttribute("LineIndex", `${nSVGLines - 1}`);
+                return;
+            }
+        }
+
+        ConnecterLine.remove();
+    }
+}
+
+function MakeDraggable(Elmnt: HTMLElement): void
+{
+    let Pos1 = 0, Pos2 = 0, Pos3 = 0, Pos4 = 0;
+    const ContainerHeader = TryGetElementByClassName(Elmnt, "draggable-container-header", 0);
+    ContainerHeader.onmousedown = DragMouseDown;
+
+    function DragMouseDown(E: MouseEvent)
+    {
+        E = E || window.event;
+        E.preventDefault();
+
+        Pos3 = E.clientX;
+        Pos4 = E.clientY;
+        document.onmouseup = CloseDragElement;
+
+        document.onmousemove = ElementDrag;
+    }
+
+    function ElementDrag(E: MouseEvent)
+    {
+        E = E || window.event;
+        E.preventDefault();
+
+        // calculate the new cursor Position:
+
+        Pos1 = Pos3 - E.clientX;
+        Pos2 = Pos4 - E.clientY;
+        Pos3 = E.clientX;
+        Pos4 = E.clientY;
+
+        // set the element's new Position:
+
+        Elmnt.style.top = (Elmnt.offsetTop - Pos2) + "px";
+        Elmnt.style.left = (Elmnt.offsetLeft - Pos1) + "px";
+    }
+
+    function CloseDragElement()
+    {
+        // stop moving when mouse button is released:
+
+        document.onmouseup = null;
+        document.onmousemove = null;
+    }
+}
+
+function NewCatFields(ScriptNames: string[], Name: string, Conditions: string): void
+{
+    const CategoryContainer = TryGetElementByID("category-container");
+
+    const DraggableContainer = document.createElement("div");
+    DraggableContainer.className = "draggable-container";
+    CategoryContainer.appendChild(DraggableContainer);
+
+    const DraggableContainerHeader = document.createElement("div");
+    DraggableContainerHeader.className = "draggable-container-header";
+    DraggableContainer.appendChild(DraggableContainerHeader);
+
+    const ConnecterRight = document.createElement("span");
+    ConnecterRight.className = "draggable-container-connecter-right";
+    ConnecterRight.setAttribute("LineIndex", "-1");
+    DraggableContainer.appendChild(ConnecterRight);
+    MakeDraggableLine(ConnecterRight);
+
+    const ConnecterLeft = document.createElement("span");
+    ConnecterLeft.className = "draggable-container-connecter-left";
+    ConnecterLeft.setAttribute("LineIndex", "-1");
+    DraggableContainer.appendChild(ConnecterLeft);
+    MakeDraggableLine(ConnecterLeft);
+
+    MakeDraggable(DraggableContainer);
+
+    const DraggableContainerContents = document.createElement("div");
+    DraggableContainerContents.className = "draggable-container-contents";
+    DraggableContainer.appendChild(DraggableContainerContents);
+
+    const SelectTypeSelect = document.createElement("select");
+    SelectTypeSelect.className = "select-type-select";
+    DraggableContainerContents.appendChild(SelectTypeSelect);
+
+    const PatternSelect = document.createElement("select");
+    PatternSelect.className = "pattern-select";
+    PatternSelect.onfocus = () =>
+    {
+        PatternSelect.innerHTML = "";
+        const PatternsContainer = TryGetElementByID("patterns-container");
+        for (const Elem of PatternsContainer.getElementsByClassName("pattern-input"))
+        {
+            const NewOption = document.createElement("option");
+            NewOption.text = (Elem as HTMLInputElement).value;
+            NewOption.value = (Elem as HTMLInputElement).value;
+            PatternSelect.add(NewOption);
+        }
+    }
+    PatternSelect.style.display = "none";
+    DraggableContainerContents.appendChild(PatternSelect);
+
+    const ScriptSelect = document.createElement("select");
+    ScriptSelect.className = "script-select";
+    ScriptSelect.onfocus = () =>
+    {
+        ScriptSelect.innerHTML = "";
+        for (const ScriptName of ScriptNames)
+        {
+            const NewOption = document.createElement("option");
+            NewOption.text = ScriptName;
+            NewOption.value = ScriptName;
+            ScriptSelect.add(NewOption);
+        }
+    }
+    ScriptSelect.style.display = "none";
+    DraggableContainerContents.appendChild(ScriptSelect);
+
+    const SelectorTypeOptions = ["Pattern", "Script"];
+    for (const Entry of SelectorTypeOptions.entries())
+    {
+        const OptionIndex = Entry[0];
+        const OptionText = Entry[1];
+
+        const NewOption = document.createElement("option");
+        NewOption.text = OptionText;
+        NewOption.value = OptionIndex.toString();
+        SelectTypeSelect.add(NewOption);
+    }
+    SelectTypeSelect.selectedIndex = -1;
+
+    let PrevSelectedSelector: HTMLSelectElement | null = null;
+    SelectTypeSelect.onchange = () =>
+    {
+        const SelectedIndex = SelectTypeSelect.selectedIndex;
+        if ((SelectedIndex >= 0) &&
+            (SelectedIndex < SelectTypeSelect.options.length))
+        {
+            const SelectorTypeOptionsIndex = Number(SelectTypeSelect.value);
+            switch(SelectorTypeOptions[SelectorTypeOptionsIndex])
+            {
+                case "Pattern":
+                {
+                    PatternSelect.style.display = "block";
+                    if (PrevSelectedSelector !== null)
+                    {
+                        (PrevSelectedSelector as HTMLSelectElement).style.display = "none";
+                    }
+                    PrevSelectedSelector = PatternSelect;
+                } break;
+                case "Script":
+                {
+                    ScriptSelect.style.display = "block";
+                    if (PrevSelectedSelector !== null)
+                    {
+                        (PrevSelectedSelector as HTMLSelectElement).style.display = "none";
+                    }
+                    PrevSelectedSelector = ScriptSelect;
+                } break;
+                default:
+                {
+                    Assert(false, "Fell through selector type options switch.");
+                } break;
+            }
+        }
+    }
+
+}
+
+function AddEmptyCat(ScriptNames: string[], ExtrDef: extr_def): void
+{
+    AddCat(ScriptNames, ExtrDef, "", "");
 }
 
 //TODO(cjb): Get category/conditions in toolbar as well.
-function AddCat(ExtrDef: extr_def, Name: string, Conditions: string): void
+function AddCat(ScriptNames: string[], ExtrDef: extr_def, Name: string, Conditions: string): void
 {
     let Cat = {
         Name: Name,
         Conditions: Conditions,
     };
     ExtrDef.Categories.push(Cat);
-    NewCatFields(Name, Conditions);
+    NewCatFields(ScriptNames, Name, Conditions);
 }
 
 
@@ -264,7 +432,7 @@ function PopulatePyModuleSelectOptions(ScriptNames: string[], Selector: HTMLSele
 }
 
 function TryGetElementByClassName(ParentElem: Element, ClassName: string,
-    Index: number): HTMLElement
+    Index: number = 0): HTMLElement
 {
     const Elem = ParentElem.getElementsByClassName(ClassName)
         .item(Index) as HTMLElement | null;
@@ -314,7 +482,7 @@ function ImportJSONConfig(S: protex_state, E: Event): void
                 AddExtr(S.Extractors, ExtrDef.Name, ExtrDef.Patterns, ExtrDef.Categories);
                 for (const Cat of ExtrDef.Categories)
                 {
-                    AddCat(S.Extractors[ExtrDefIndex], Cat.Name, Cat.Conditions);
+                    AddCat(S.ScriptNames, S.Extractors[ExtrDefIndex], Cat.Name, Cat.Conditions);
                 }
 
                 for (const P of ExtrDef.Patterns)
@@ -348,7 +516,7 @@ function GenJSONConfig(Extractors: extr_def[]): string
     let ExtrDefs: extr_def[] = [];
     Extractors.map((ExtrDef) =>
     {
-        if (ExtrDef.Name === CurrentExtractor)  // Use DOM elements
+        if (ExtrDef.Name === CurrentExtractor) // Use DOM elements
         {
             ExtrDef.Patterns = [];
             const PatternsContainer = TryGetElementByID("patterns-container");
@@ -357,19 +525,112 @@ function GenJSONConfig(Extractors: extr_def[]): string
                 ExtrDef.Patterns.push((Elem as HTMLInputElement).value);
             }
 
-            ExtrDef.Categories = [];
-            for (const CatItem of document.getElementsByClassName("cat-fields-item"))
-            {
-                const CatNameInput = TryGetElementByClassName(
-                    CatItem, "cat-name-input", 0) as HTMLInputElement;
-                const ConditionsInput = TryGetElementByClassName(
-                    CatItem, "conditions-input", 0) as HTMLInputElement;
+            const CategoryContainer = TryGetElementByID("category-container");
 
-                ExtrDef.Categories.push({
-                    Name: CatNameInput.value,
-                    Conditions: ConditionsInput.value,
-                });
+            let FirstOpBoxIndex: number = -1;
+            let DraggableContainerIndex: number = 0;
+            const OpBoxes = CategoryContainer.getElementsByClassName("draggable-container");
+            for (const DraggableContainer of OpBoxes)
+            {
+                const LeftConnecter = TryGetElementByClassName(
+                    DraggableContainer, "draggable-container-connecter-left");
+
+                const LeftLineIndex = LeftConnecter.getAttribute("LineIndex");
+                Assert(LeftLineIndex !== null, "LineIndex attribute was null.");
+
+                if (Number(LeftLineIndex) === -1)
+                {
+                    const RightConnecter = TryGetElementByClassName(
+                       DraggableContainer, "draggable-container-connecter-right");
+
+                    const RightLineIndex = RightConnecter.getAttribute("LineIndex");
+                    Assert(RightLineIndex !== null, "LineIndex attribute was null.");
+
+                    if (Number(RightLineIndex) >= 0)
+                    {
+                        if (FirstOpBoxIndex !== -1)
+                        {
+                            Assert(false, "Found multiple start paths.");
+                        }
+                        FirstOpBoxIndex = DraggableContainerIndex;
+                    }
+                    else
+                    {
+                        Assert(false, "Box with no connections");
+                    }
+                }
+
+                DraggableContainerIndex += 1;
             }
+            Assert(FirstOpBoxIndex !== -1, "No valid starting op box.");
+
+            let ConditionsJSON: any = {}; // TODO(cjb): NOT A STRINIGIFIEDD JSON obj.....
+            let CurrOpBox = OpBoxes[FirstOpBoxIndex];
+            while(true)
+            {
+                const SelectTypeSelect = TryGetElementByClassName(
+                    CurrOpBox, "select-type-select") as HTMLSelectElement;
+                switch(Number(SelectTypeSelect.value))
+                {
+                    case 0: // TODO(cjb) FIXME pattern
+                    {
+                        const PatternSelect = TryGetElementByClassName(
+                            CurrOpBox, "pattern-select") as HTMLSelectElement;
+                        Assert(PatternSelect.value !== "", "PatternSelect was empty.");
+                        ConditionsJSON.Pattern = PatternSelect.value;
+                    } break;
+                    case 1: // TODO(cjb) FIXME script
+                    {
+                        const ScriptSelect = TryGetElementByClassName(
+                            CurrOpBox, "script-select") as HTMLSelectElement;
+                        Assert(ScriptSelect.value !== "", "ScriptSelect was empty.");
+                        ConditionsJSON.Script = ScriptSelect.value;
+                    } break;
+                    default:
+                    {
+                        Assert(false, "Fell through selector type options switch.");
+                    } break;
+                }
+
+                const RightConnecter = TryGetElementByClassName(
+                   CurrOpBox, "draggable-container-connecter-right");
+
+                const RightLineIndex = RightConnecter.getAttribute("LineIndex");
+                Assert(RightLineIndex !== null, "LineIndex attribute was null.");
+
+                if (Number(RightLineIndex) === -1)
+                {
+                    break;
+                }
+
+                let NextBoxIndex: number = -1;
+                let BoxIndex: number = 0;
+                for (const Box of OpBoxes)
+                {
+                    const LeftConnecter = TryGetElementByClassName(
+                        Box, "draggable-container-connecter-left");
+
+                    const LeftLineIndex = LeftConnecter.getAttribute("LineIndex");
+                    Assert(LeftLineIndex !== null, "LineIndex attribute was null.");
+
+                    if (Number(RightLineIndex) === Number(LeftLineIndex))
+                    {
+                        NextBoxIndex = BoxIndex;
+                        break;
+                    }
+
+                    BoxIndex += 1;
+                }
+                Assert(NextBoxIndex !== -1, "NextBoxIndex was -1");
+
+                CurrOpBox = OpBoxes[NextBoxIndex];
+            }
+
+            ExtrDef.Categories = [];
+            ExtrDef.Categories.push({
+                Name: "DEBUGNAME",
+                Conditions: JSON.stringify(ConditionsJSON),
+            });
         }
     });
 
@@ -421,10 +682,7 @@ async function GetUserInput(): Promise<string>
 
     return new Promise<string>((Resolve) => {
         const UserInput = document.createElement("input");
-        UserInput.style.position = "fixed";
-        UserInput.style.left = "50%";
-        UserInput.style.top = "50%";
-        UserInput.style.transform = "translate(-50%, -50%)";
+        UserInput.className = "user-prompt";
         document.body.appendChild(UserInput);
         UserInput.focus();
         FinishedInput(UserInput).then(() =>
@@ -452,11 +710,8 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     S.ScriptNames = Result.slice(0);
 
     // Root container to add dom elements to.
-    const AContainer = document.getElementById("a-container")
-    if (AContainer == null)
-    {
-        throw "Couldn't get acontainer element";
-    }
+
+    const AContainer = TryGetElementByID("a-container");
 
     const ToolbarContainer = document.createElement("div");
     ToolbarContainer.id = "toolbar-container";
@@ -645,7 +900,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
 
                     for (const Cat of S.Extractors[ExtractorSelect.selectedIndex].Categories)
                     {
-                        NewCatFields(Cat.Name, Cat.Conditions);
+                        NewCatFields(S.ScriptNames, Cat.Name, Cat.Conditions);
                     }
                     for (const P of S.Extractors[ExtractorSelect.selectedIndex].Patterns)
                     {
@@ -667,7 +922,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         {
             for (const Cat of S.Extractors[ExtractorSelect.selectedIndex].Categories)
             {
-                NewCatFields(Cat.Name, Cat.Conditions);
+                NewCatFields(S.ScriptNames, Cat.Name, Cat.Conditions);
             }
             for (const P of S.Extractors[ExtractorSelect.selectedIndex].Patterns)
             {
@@ -777,33 +1032,52 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     }
     ABox.appendChild(PreText);
 
-    const AddCategoryButton = document.createElement("button");
-    AddCategoryButton.className = "add-category-button";
-    AddCategoryButton.innerText = "New category";
-    AddCategoryButton.onclick = () =>
+    const CategoryContainer = document.createElement("div");
+    CategoryContainer.id = "category-container";
+    AContainer.appendChild(CategoryContainer);
+
+    CategoryContainer.onauxclick = (E: MouseEvent) =>
     {
-        if (S.Extractors.length > 0) // Have at least 1 extractor?
+        E.preventDefault();
+
+        const RightClick = 2;
+        if (E.button === RightClick)
         {
-            AddEmptyCat(S.Extractors[ExtractorSelect.selectedIndex]);
-        }
-        else // TODO(cjb): Actually save categories and patterns to anon extractor def.
-        {
-            const FakeExtr: extr_def = {
-                Name: "fakiemcfake",
-                Patterns: [],
-                Categories: []
-            };
-            AddEmptyCat(FakeExtr);
+            if (S.Extractors.length > 0) // Have at least 1 extractor?
+            {
+                AddEmptyCat(S.ScriptNames, S.Extractors[ExtractorSelect.selectedIndex]);
+            }
+            else // TODO(cjb): Actually save categories and patterns to anon extractor def.
+            {
+                const FakeExtr: extr_def = {
+                    Name: "fakiemcfake",
+                    Patterns: [],
+                    Categories: []
+                };
+                AddEmptyCat(S.ScriptNames, FakeExtr);
+            }
         }
     }
-    AContainer.appendChild(AddCategoryButton);
+
+    const SVGCategoryMask = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    SVGCategoryMask.id = "svg-category-mask";
+    SVGCategoryMask.style.position = "absolute";
+    SVGCategoryMask.setAttribute("width", `${CategoryContainer.clientWidth}`);
+    SVGCategoryMask.setAttribute("height", `${CategoryContainer.clientHeight}`);
+    window.onresize = () =>
+    {
+        SVGCategoryMask.setAttribute("width", `${CategoryContainer.clientWidth}`);
+        SVGCategoryMask.setAttribute("height", `${CategoryContainer.clientHeight}`);
+    }
+    CategoryContainer.appendChild(SVGCategoryMask);
 
     const AutoCompleteMenu = document.createElement("menu");
     AutoCompleteMenu.id = "auto-complete-menu";
     AContainer.appendChild(AutoCompleteMenu);
 
-    const DEBUGSelected = document.createElement("p");
-    DEBUGSelected.className = "bottomleft";
+    const DEBUGTextInfo = document.createElement("p");
+    DEBUGTextInfo.className = "bottomleft";
+    DEBUGTextInfo.id = "debug-text-info";
     document.addEventListener("keyup", (E: Event) => {
         if ((E as KeyboardEvent).key === "Tab")
         {
@@ -811,11 +1085,11 @@ ProtexWindow.ProtexAPI.GetScriptNames()
             {
                 const LocalName = (E.target as HTMLElement).localName;
                 const ClassName = (E.target as HTMLElement).className;
-                DEBUGSelected.innerText = `${LocalName}.${ClassName}`;
+                DEBUGTextInfo.innerText = `${LocalName}.${ClassName}`;
             }
         }
     });
-    AContainer.appendChild(DEBUGSelected);
+    AContainer.appendChild(DEBUGTextInfo);
 
     // Ascii fox by Brian Kendig
     const AsciiFox4Motivation = document.createElement("pre");
@@ -826,7 +1100,6 @@ ProtexWindow.ProtexAPI.GetScriptNames()
      \\_   /__/  \\/
      _/  __   __/
     /___/____/
-    v0.5.0-alpha
-    `;
+    v0.5.0-alpha`;
     AContainer.appendChild(AsciiFox4Motivation);
 }); // GetPyModule
