@@ -2,6 +2,10 @@
 
 This project adheres to [semver](https://semver.org/)
 
+## [0.5.0-alpha] - unreleased
+### Added
+- Visual scripting system
+
 ## [0.4.1-alpha] - 02-16-23
 ### Added
 - Toolbar and actions changing what is displayed to the user ( example: target specific extractor
