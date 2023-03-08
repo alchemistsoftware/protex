@@ -24,6 +24,11 @@ interface protex_state
     Extractors: extr_def[],
 };
 
+interface html_nub extends HTMLElement
+{
+    LineIndices: number[],
+};
+
 function Assert(ExprTruthiness: boolean, DEBUGMsg: string): void
 {
     if (!ExprTruthiness)
@@ -38,14 +43,61 @@ function Assert(ExprTruthiness: boolean, DEBUGMsg: string): void
     }
 }
 
-function MakeDraggableLine(Elmnt: HTMLElement): void
+function LineIndexFromNub(Nub: HTMLElement): number
+{
+    let Result = Number(Nub.getAttribute("LineIndex"));
+    return Result;
+}
+
+function RemoveSVGLineByIndex(TargetLineIndex: number): void
+{
+    if (TargetLineIndex >= 0)
+    {
+        const CategoryContainer = TryGetElementByID("category-container");
+        const OpBoxes = CategoryContainer.getElementsByClassName("draggable-container");
+        for (const Box of OpBoxes)
+        {
+            const LeftNub = TryGetElementByClassName(
+                Box, "draggable-container-connecter-left") as html_nub;
+            for (const LineIndex of LeftNub.LineIndices)
+            {
+                if (LineIndex === TargetLineIndex)
+                {
+                    const IndexOfIndexToRemove = LeftNub.LineIndices.indexOf(LineIndex);
+                    LeftNub.LineIndices.splice(IndexOfIndexToRemove, 1);
+                    break;
+                }
+            }
+
+            const RightNub = TryGetElementByClassName(
+                Box, "draggable-container-connecter-right") as html_nub;
+            for (const LineIndex of RightNub.LineIndices)
+            {
+                if (LineIndex === TargetLineIndex)
+                {
+                    const IndexOfIndexToRemove = RightNub.LineIndices.indexOf(LineIndex);
+                    RightNub.LineIndices.splice(IndexOfIndexToRemove, 1);
+                    break;
+                }
+            }
+        }
+
+        const SVGCategoryMask = TryGetElementByID("svg-category-mask");
+
+        Assert(TargetLineIndex < SVGCategoryMask.childElementCount,
+               "TargetLineIndex out of bounds.");
+        SVGCategoryMask.children[TargetLineIndex].remove()
+    }
+}
+
+function MakeDraggableLine(ConnecterNub: html_nub): void
 {
     const CategoryContainer = TryGetElementByID("category-container");
     const SVGCategoryMask = TryGetElementByID("svg-category-mask");
 
     let ConnecterLine: SVGLineElement;
 
-    Elmnt.onmousedown = DragMouseDown;
+    ConnecterNub.onmousedown = DragMouseDown;
 
     function DragMouseDown(E: MouseEvent): void
     {
@@ -53,34 +105,9 @@ function MakeDraggableLine(Elmnt: HTMLElement): void
         const X = E.clientX - CategoryContainer.offsetLeft;
         const Y = E.clientY - CategoryContainer.offsetTop;
 
-        // Remove any pre-existing line
-
-        const TargetLineIndex = Number(Elmnt.getAttribute("LineIndex"));
-        if (TargetLineIndex >= 0)
+        for (const LineIndex of ConnecterNub.LineIndices)
         {
-            const OpBoxes = CategoryContainer.getElementsByClassName("draggable-container");
-            for (const Box of OpBoxes)
-            {
-                const LeftConnecter = TryGetElementByClassName(
-                    Box, "draggable-container-connecter-left");
-                const RightConnecter = TryGetElementByClassName(
-                    Box, "draggable-container-connecter-right");
-
-                const LeftLineIndex = Number(LeftConnecter.getAttribute("LineIndex"));
-                const RightLineIndex = Number(RightConnecter.getAttribute("LineIndex"));
-
-                if (LeftLineIndex === TargetLineIndex)
-                {
-                    LeftConnecter.setAttribute("LineIndex", "-1");
-                }
-                else if (RightLineIndex === TargetLineIndex)
-                {
-                    RightConnecter.setAttribute("LineIndex", "-1");
-                }
-            }
-            Assert(TargetLineIndex < SVGCategoryMask.childElementCount,
-                   "TargetLineIndex out of bounds.");
-            SVGCategoryMask.children[TargetLineIndex].remove()
+            RemoveSVGLineByIndex(LineIndex);
         }
 
         ConnecterLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -95,6 +122,7 @@ function MakeDraggableLine(Elmnt: HTMLElement): void
         document.onmouseup = EndLineDrag;
         document.onmousemove = ElementDrag;
     }
+
     function ElementDrag(E: MouseEvent)
     {
         E = E || window.event;
@@ -107,8 +135,6 @@ function MakeDraggableLine(Elmnt: HTMLElement): void
         ConnecterLine.setAttribute("y2", `${Y}`);
     }
 
-    // Clean up
-
     function EndLineDrag(ME: MouseEvent): void
     {
         ME.preventDefault();
@@ -116,14 +142,23 @@ function MakeDraggableLine(Elmnt: HTMLElement): void
         document.onmouseup = null;
         document.onmousemove = null;
 
-        if (ME.target !== null)
+        // Validate line connection before it is finalized.
+
+        const TargetNub = ME.target as html_nub | null;
+        if (TargetNub !== null)
         {
-            if ((ME.target as HTMLElement).className === "draggable-container-connecter-left")
+            if ((ConnecterNub.parentElement !== TargetNub.parentElement) &&
+                ((TargetNub.className === "draggable-container-connecter-left") &&
+                 (ConnecterNub.className === "draggable-container-connecter-right")) ||
+                ((TargetNub.className === "draggable-container-connecter-right") &&
+                 (ConnecterNub.className === "draggable-container-connecter-left")))
             {
                 const nSVGLines = document.getElementsByTagName("line").length;
                 Assert(nSVGLines > 0, "nSVG lines was 0");
-                (ME.target as HTMLElement).setAttribute("LineIndex", `${nSVGLines - 1}`);
-                Elmnt.setAttribute("LineIndex", `${nSVGLines - 1}`);
+
+                TargetNub.LineIndices.push(nSVGLines - 1);
+                ConnecterNub.LineIndices.push(nSVGLines - 1);
+
                 return;
             }
         }
@@ -172,24 +207,22 @@ function MakeDraggable(Elmnt: HTMLElement): void
 
         // Also remember to draw lines at new position
 
-        const LeftConnecter = TryGetElementByClassName(Elmnt,
-           "draggable-container-connecter-left");
-        const LeftConnecterLineIndex = Number(LeftConnecter.getAttribute("LineIndex"))
-        if (LeftConnecterLineIndex !== -1)
+        const LeftNub = TryGetElementByClassName(Elmnt,
+           "draggable-container-connecter-left") as html_nub;
+        for (const LineIndex of LeftNub.LineIndices)
         {
-            const Line = SVGCategoryMask.children[LeftConnecterLineIndex] as HTMLElement;
-            Line.setAttribute("x2", `${Elmnt.offsetLeft - Pos1 + LeftConnecter.offsetLeft}`);
-            Line.setAttribute("y2", `${Elmnt.offsetTop - Pos2 + LeftConnecter.offsetTop}`);
+            const Line = SVGCategoryMask.children[LineIndex] as HTMLElement;
+            Line.setAttribute("x2", `${Elmnt.offsetLeft - Pos1 + LeftNub.offsetLeft}`);
+            Line.setAttribute("y2", `${Elmnt.offsetTop - Pos2 + LeftNub.offsetTop}`);
         }
 
-        const RightConnecter = TryGetElementByClassName(Elmnt,
-           "draggable-container-connecter-right");
-        const RightConnecterLineIndex = Number(RightConnecter.getAttribute("LineIndex"))
-        if (RightConnecterLineIndex !== -1)
+        const RightNub = TryGetElementByClassName(Elmnt,
+           "draggable-container-connecter-right") as html_nub;
+        for (const LineIndex of RightNub.LineIndices)
         {
-            const Line = SVGCategoryMask.children[RightConnecterLineIndex] as HTMLElement;
-            Line.setAttribute("x1", `${Elmnt.offsetLeft - Pos1 + RightConnecter.offsetLeft}`);
-            Line.setAttribute("y1", `${Elmnt.offsetTop - Pos2 + RightConnecter.offsetTop}`);
+            const Line = SVGCategoryMask.children[LineIndex] as HTMLElement;
+            Line.setAttribute("x1", `${Elmnt.offsetLeft - Pos1 + RightNub.offsetLeft}`);
+            Line.setAttribute("y1", `${Elmnt.offsetTop - Pos2 + RightNub.offsetTop}`);
         }
     }
 
@@ -214,19 +247,39 @@ function NewCatFields(ScriptNames: string[], Name: string, Conditions: string): 
     DraggableContainerHeader.className = "draggable-container-header";
     DraggableContainer.appendChild(DraggableContainerHeader);
 
-    const ConnecterRight = document.createElement("span");
-    ConnecterRight.className = "draggable-container-connecter-right";
-    ConnecterRight.setAttribute("LineIndex", "-1");
-    DraggableContainer.appendChild(ConnecterRight);
-    MakeDraggableLine(ConnecterRight);
+    const RightNub = document.createElement("span") as html_nub;
+    RightNub.className = "draggable-container-connecter-right";
+    RightNub.LineIndices = [];
+    DraggableContainer.appendChild(RightNub);
+    MakeDraggableLine(RightNub);
 
-    const ConnecterLeft = document.createElement("span");
-    ConnecterLeft.className = "draggable-container-connecter-left";
-    ConnecterLeft.setAttribute("LineIndex", "-1");
-    DraggableContainer.appendChild(ConnecterLeft);
-    MakeDraggableLine(ConnecterLeft);
+    const LeftNub = document.createElement("span") as html_nub;
+    LeftNub.className = "draggable-container-connecter-left";
+    LeftNub.LineIndices = [];
+    DraggableContainer.appendChild(LeftNub);
+    MakeDraggableLine(LeftNub);
 
     MakeDraggable(DraggableContainer);
+
+    // Remove a box by right clicking on it
+
+    DraggableContainer.onauxclick = (E: MouseEvent) =>
+    {
+        E.stopImmediatePropagation();
+        E.preventDefault();
+
+        for (const LineIndex of LeftNub.LineIndices)
+        {
+            RemoveSVGLineByIndex(LineIndex);
+        }
+
+        for (const LineIndex of RightNub.LineIndices)
+        {
+            RemoveSVGLineByIndex(LineIndex);
+        }
+
+        DraggableContainer.remove();
+    };
 
     const DraggableContainerContents = document.createElement("div");
     DraggableContainerContents.className = "draggable-container-contents";
@@ -335,7 +388,6 @@ function AddCat(ScriptNames: string[], ExtrDef: extr_def, Name: string, Conditio
     ExtrDef.Categories.push(Cat);
     NewCatFields(ScriptNames, Name, Conditions);
 }
-
 
 function LastSelectedPatternInput(): HTMLInputElement | null
 {
