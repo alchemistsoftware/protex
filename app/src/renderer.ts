@@ -53,6 +53,36 @@ function MakeDraggableLine(Elmnt: HTMLElement): void
         const X = E.clientX - CategoryContainer.offsetLeft;
         const Y = E.clientY - CategoryContainer.offsetTop;
 
+        // Remove any pre-existing line
+
+        const TargetLineIndex = Number(Elmnt.getAttribute("LineIndex"));
+        if (TargetLineIndex >= 0)
+        {
+            const OpBoxes = CategoryContainer.getElementsByClassName("draggable-container");
+            for (const Box of OpBoxes)
+            {
+                const LeftConnecter = TryGetElementByClassName(
+                    Box, "draggable-container-connecter-left");
+                const RightConnecter = TryGetElementByClassName(
+                    Box, "draggable-container-connecter-right");
+
+                const LeftLineIndex = Number(LeftConnecter.getAttribute("LineIndex"));
+                const RightLineIndex = Number(RightConnecter.getAttribute("LineIndex"));
+
+                if (LeftLineIndex === TargetLineIndex)
+                {
+                    LeftConnecter.setAttribute("LineIndex", "-1");
+                }
+                else if (RightLineIndex === TargetLineIndex)
+                {
+                    RightConnecter.setAttribute("LineIndex", "-1");
+                }
+            }
+            Assert(TargetLineIndex < SVGCategoryMask.childElementCount,
+                   "TargetLineIndex out of bounds.");
+            SVGCategoryMask.children[TargetLineIndex].remove()
+        }
+
         ConnecterLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
         ConnecterLine.setAttribute("x1", `${X}`);
         ConnecterLine.setAttribute("y1", `${Y}`);
@@ -104,8 +134,11 @@ function MakeDraggableLine(Elmnt: HTMLElement): void
 
 function MakeDraggable(Elmnt: HTMLElement): void
 {
-    let Pos1 = 0, Pos2 = 0, Pos3 = 0, Pos4 = 0;
+    const CategoryContainer = TryGetElementByID("category-container");
+    const SVGCategoryMask = TryGetElementByID("svg-category-mask");
     const ContainerHeader = TryGetElementByClassName(Elmnt, "draggable-container-header", 0);
+
+    let Pos1 = 0, Pos2 = 0, Pos3 = 0, Pos4 = 0;
     ContainerHeader.onmousedown = DragMouseDown;
 
     function DragMouseDown(E: MouseEvent)
@@ -115,8 +148,8 @@ function MakeDraggable(Elmnt: HTMLElement): void
 
         Pos3 = E.clientX;
         Pos4 = E.clientY;
-        document.onmouseup = CloseDragElement;
 
+        document.onmouseup = CloseDragElement;
         document.onmousemove = ElementDrag;
     }
 
@@ -125,22 +158,44 @@ function MakeDraggable(Elmnt: HTMLElement): void
         E = E || window.event;
         E.preventDefault();
 
-        // calculate the new cursor Position:
+        // Calculate the new cursor position:
 
         Pos1 = Pos3 - E.clientX;
         Pos2 = Pos4 - E.clientY;
         Pos3 = E.clientX;
         Pos4 = E.clientY;
 
-        // set the element's new Position:
+        // Set the element's new position:
 
-        Elmnt.style.top = (Elmnt.offsetTop - Pos2) + "px";
         Elmnt.style.left = (Elmnt.offsetLeft - Pos1) + "px";
+        Elmnt.style.top = (Elmnt.offsetTop - Pos2) + "px";
+
+        // Also remember to draw lines at new position
+
+        const LeftConnecter = TryGetElementByClassName(Elmnt,
+           "draggable-container-connecter-left");
+        const LeftConnecterLineIndex = Number(LeftConnecter.getAttribute("LineIndex"))
+        if (LeftConnecterLineIndex !== -1)
+        {
+            const Line = SVGCategoryMask.children[LeftConnecterLineIndex] as HTMLElement;
+            Line.setAttribute("x2", `${Elmnt.offsetLeft - Pos1 + LeftConnecter.offsetLeft}`);
+            Line.setAttribute("y2", `${Elmnt.offsetTop - Pos2 + LeftConnecter.offsetTop}`);
+        }
+
+        const RightConnecter = TryGetElementByClassName(Elmnt,
+           "draggable-container-connecter-right");
+        const RightConnecterLineIndex = Number(RightConnecter.getAttribute("LineIndex"))
+        if (RightConnecterLineIndex !== -1)
+        {
+            const Line = SVGCategoryMask.children[RightConnecterLineIndex] as HTMLElement;
+            Line.setAttribute("x1", `${Elmnt.offsetLeft - Pos1 + RightConnecter.offsetLeft}`);
+            Line.setAttribute("y1", `${Elmnt.offsetTop - Pos2 + RightConnecter.offsetTop}`);
+        }
     }
 
     function CloseDragElement()
     {
-        // stop moving when mouse button is released:
+        // Stop moving when mouse button is released:
 
         document.onmouseup = null;
         document.onmousemove = null;
