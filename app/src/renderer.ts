@@ -51,42 +51,72 @@ function LineIndexFromNub(Nub: HTMLElement): number
 
 function RemoveSVGLineByIndex(TargetLineIndex: number): void
 {
-    if (TargetLineIndex >= 0)
+    const CategoryContainer = TryGetElementByID("category-container");
+    const OpBoxes = CategoryContainer.getElementsByClassName("draggable-container");
+    if ((TargetLineIndex >= 0) &&
+        (TargetLineIndex < OpBoxes.length))
     {
-        const CategoryContainer = TryGetElementByID("category-container");
-        const OpBoxes = CategoryContainer.getElementsByClassName("draggable-container");
+        let FoundTargetIndex = false;
+
+        function RemoveLineIndexFromNub(Nub: html_nub): void
+        {
+            const IndexToRemove = Nub.LineIndices.indexOf(TargetLineIndex);
+            if (IndexToRemove !== -1)
+            {
+                Nub.LineIndices.splice(IndexToRemove, 1);
+                FoundTargetIndex = true;
+            }
+        }
+
+        // First remove indices from both boxes
+
         for (const Box of OpBoxes)
         {
             const LeftNub = TryGetElementByClassName(
                 Box, "draggable-container-connecter-left") as html_nub;
-            for (const LineIndex of LeftNub.LineIndices)
-            {
-                if (LineIndex === TargetLineIndex)
-                {
-                    const IndexOfIndexToRemove = LeftNub.LineIndices.indexOf(LineIndex);
-                    LeftNub.LineIndices.splice(IndexOfIndexToRemove, 1);
-                    break;
-                }
-            }
+            RemoveLineIndexFromNub(LeftNub);
 
             const RightNub = TryGetElementByClassName(
                 Box, "draggable-container-connecter-right") as html_nub;
-            for (const LineIndex of RightNub.LineIndices)
+            RemoveLineIndexFromNub(RightNub);
+        }
+
+        // Now update the indicies of nubs if their index is > than the removed index.
+
+        if (FoundTargetIndex)
+        {
+            for (const Box of OpBoxes)
             {
-                if (LineIndex === TargetLineIndex)
+                const LeftNub = TryGetElementByClassName(
+                    Box, "draggable-container-connecter-left") as html_nub;
+                for (let [LineIndexIndex, LineIndex] of LeftNub.LineIndices.entries())
                 {
-                    const IndexOfIndexToRemove = RightNub.LineIndices.indexOf(LineIndex);
-                    RightNub.LineIndices.splice(IndexOfIndexToRemove, 1);
-                    break;
+                    if (LineIndex > TargetLineIndex)
+                    {
+                        LeftNub.LineIndices[LineIndexIndex] -= 1;
+                    }
+                }
+
+                const RightNub = TryGetElementByClassName(
+                    Box, "draggable-container-connecter-right") as html_nub;
+                for (let [LineIndexIndex, LineIndex] of RightNub.LineIndices.entries())
+                {
+                    if (LineIndex > TargetLineIndex)
+                    {
+                        RightNub.LineIndices[LineIndexIndex] -= 1;
+                    }
                 }
             }
         }
 
-        const SVGCategoryMask = TryGetElementByID("svg-category-mask");
+        // Lastly remove the actual SVG line from the DOM.
 
-        Assert(TargetLineIndex < SVGCategoryMask.childElementCount,
-               "TargetLineIndex out of bounds.");
+        const SVGCategoryMask = TryGetElementByID("svg-category-mask");
         SVGCategoryMask.children[TargetLineIndex].remove()
+    }
+    else
+    {
+        Assert(false, `TargetLineIndex: ${TargetLineIndex} out of bounds.`);
     }
 }
 
@@ -105,9 +135,9 @@ function MakeDraggableLine(ConnecterNub: html_nub): void
         const X = E.clientX - CategoryContainer.offsetLeft;
         const Y = E.clientY - CategoryContainer.offsetTop;
 
-        for (const LineIndex of ConnecterNub.LineIndices)
+        while (ConnecterNub.LineIndices.length > 0)
         {
-            RemoveSVGLineByIndex(LineIndex);
+            RemoveSVGLineByIndex(ConnecterNub.LineIndices[0]);
         }
 
         ConnecterLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -268,14 +298,16 @@ function NewCatFields(ScriptNames: string[], Name: string, Conditions: string): 
         E.stopImmediatePropagation();
         E.preventDefault();
 
-        for (const LineIndex of LeftNub.LineIndices)
+        debugger;
+
+        while(LeftNub.LineIndices.length > 0)
         {
-            RemoveSVGLineByIndex(LineIndex);
+            RemoveSVGLineByIndex(LeftNub.LineIndices[0]);
         }
 
-        for (const LineIndex of RightNub.LineIndices)
+        while(RightNub.LineIndices.length > 0)
         {
-            RemoveSVGLineByIndex(LineIndex);
+            RemoveSVGLineByIndex(RightNub.LineIndices[0]);
         }
 
         DraggableContainer.remove();
@@ -425,6 +457,7 @@ function UpdateSelectedPattern(TargetPatternInput: HTMLInputElement): void
 
         SpanifiedText += LHS + RHS;
         Offset = EO;
+
         break;
     }
 	SpanifiedText += TextAreaText.substring(Offset);
