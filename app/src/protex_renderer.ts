@@ -1,33 +1,6 @@
+import {cat_def, extr_def, protex_window, protex_state, html_nub} from "./protex_renderer_include";
+
 const ProtexWindow = window as unknown as protex_window;
-
-interface cat_def
-{
-    Name: string,
-    Conditions: string,
-};
-
-interface extr_def
-{
-    Name: string,
-    Categories: cat_def[],
-    Patterns: string[],
-};
-
-interface protex_window extends Window
-{
-    ProtexAPI: any
-};
-
-interface protex_state
-{
-    ScriptNames: string[],
-    Extractors: extr_def[],
-};
-
-interface html_nub extends HTMLElement
-{
-    LineIndices: number[],
-};
 
 function Assert(ExprTruthiness: boolean, DEBUGMsg: string): void
 {
@@ -43,7 +16,17 @@ function Assert(ExprTruthiness: boolean, DEBUGMsg: string): void
     }
 }
 
-function LineIndexFromNub(Nub: HTMLElement): number
+function NubsFromContainer(Container: Element): [html_nub, html_nub]
+{
+    const LeftNub = TryGetElementByClassName(
+        Container, "draggable-container-connecter-left") as html_nub;
+    const RightNub = TryGetElementByClassName(
+        Container, "draggable-container-connecter-right") as html_nub;
+
+    return [LeftNub, RightNub];
+}
+
+function LineIndexFromNub(Nub: Element): number
 {
     let Result = Number(Nub.getAttribute("LineIndex"));
     return Result;
@@ -72,12 +55,8 @@ function RemoveSVGLineByIndex(TargetLineIndex: number): void
 
         for (const Box of OpBoxes)
         {
-            const LeftNub = TryGetElementByClassName(
-                Box, "draggable-container-connecter-left") as html_nub;
+            const [LeftNub, RightNub] = NubsFromContainer(Box);
             RemoveLineIndexFromNub(LeftNub);
-
-            const RightNub = TryGetElementByClassName(
-                Box, "draggable-container-connecter-right") as html_nub;
             RemoveLineIndexFromNub(RightNub);
         }
 
@@ -87,8 +66,8 @@ function RemoveSVGLineByIndex(TargetLineIndex: number): void
         {
             for (const Box of OpBoxes)
             {
-                const LeftNub = TryGetElementByClassName(
-                    Box, "draggable-container-connecter-left") as html_nub;
+                const [LeftNub, RightNub] = NubsFromContainer(Box);
+
                 for (let [LineIndexIndex, LineIndex] of LeftNub.LineIndices.entries())
                 {
                     if (LineIndex > TargetLineIndex)
@@ -96,9 +75,6 @@ function RemoveSVGLineByIndex(TargetLineIndex: number): void
                         LeftNub.LineIndices[LineIndexIndex] -= 1;
                     }
                 }
-
-                const RightNub = TryGetElementByClassName(
-                    Box, "draggable-container-connecter-right") as html_nub;
                 for (let [LineIndexIndex, LineIndex] of RightNub.LineIndices.entries())
                 {
                     if (LineIndex > TargetLineIndex)
@@ -237,17 +213,14 @@ function MakeDraggable(Elmnt: HTMLElement): void
 
         // Also remember to draw lines at new position
 
-        const LeftNub = TryGetElementByClassName(Elmnt,
-           "draggable-container-connecter-left") as html_nub;
+        const [LeftNub, RightNub] = NubsFromContainer(Elmnt);
+
         for (const LineIndex of LeftNub.LineIndices)
         {
             const Line = SVGCategoryMask.children[LineIndex] as HTMLElement;
             Line.setAttribute("x2", `${Elmnt.offsetLeft - Pos1 + LeftNub.offsetLeft}`);
             Line.setAttribute("y2", `${Elmnt.offsetTop - Pos2 + LeftNub.offsetTop}`);
         }
-
-        const RightNub = TryGetElementByClassName(Elmnt,
-           "draggable-container-connecter-right") as html_nub;
         for (const LineIndex of RightNub.LineIndices)
         {
             const Line = SVGCategoryMask.children[LineIndex] as HTMLElement;
@@ -298,8 +271,6 @@ function NewCatFields(ScriptNames: string[], Name: string, Conditions: string): 
         E.stopImmediatePropagation();
         E.preventDefault();
 
-        debugger;
-
         while(LeftNub.LineIndices.length > 0)
         {
             RemoveSVGLineByIndex(LeftNub.LineIndices[0]);
@@ -312,6 +283,7 @@ function NewCatFields(ScriptNames: string[], Name: string, Conditions: string): 
 
         DraggableContainer.remove();
     };
+
 
     const DraggableContainerContents = document.createElement("div");
     DraggableContainerContents.className = "draggable-container-contents";
@@ -338,6 +310,41 @@ function NewCatFields(ScriptNames: string[], Name: string, Conditions: string): 
     PatternSelect.style.display = "none";
     DraggableContainerContents.appendChild(PatternSelect);
 
+    const OffsetSlider = document.createElement("input");
+    OffsetSlider.className = "capture-offset-slider";
+    OffsetSlider.setAttribute("type", "range");
+    OffsetSlider.setAttribute("min", "0");
+    OffsetSlider.setAttribute("max", "500");
+    OffsetSlider.setAttribute("value", "0");
+    OffsetSlider.setAttribute("step", "10");
+    OffsetSlider.style.display = "none";
+    OffsetSlider.oninput = () =>
+    {
+        HighlightCapture(PatternSelect.value, Number(OffsetSlider.value));
+    };
+
+    for (const Elem of [DraggableContainer, DraggableContainerHeader, DraggableContainerContents])
+    {
+        Elem.onmouseover = () =>
+        {
+            if (SelectTypeSelect.value === "0")
+            {
+                HighlightCapture(PatternSelect.value, Number(OffsetSlider.value));
+            }
+        };
+
+        Elem.onmouseout = () =>
+        {
+            const LSPI = LastSelectedPatternInput();
+            if (LSPI != null)
+            {
+                HighlightCapture(LSPI.value);
+            }
+        };
+    }
+
+    DraggableContainerContents.appendChild(OffsetSlider);
+
     const ScriptSelect = document.createElement("select");
     ScriptSelect.className = "script-select";
     ScriptSelect.onfocus = () =>
@@ -354,7 +361,7 @@ function NewCatFields(ScriptNames: string[], Name: string, Conditions: string): 
     ScriptSelect.style.display = "none";
     DraggableContainerContents.appendChild(ScriptSelect);
 
-    const SelectorTypeOptions = ["Pattern", "Script"];
+    const SelectorTypeOptions = ["Capture", "Script"];
     for (const Entry of SelectorTypeOptions.entries())
     {
         const OptionIndex = Entry[0];
@@ -367,7 +374,6 @@ function NewCatFields(ScriptNames: string[], Name: string, Conditions: string): 
     }
     SelectTypeSelect.selectedIndex = -1;
 
-    let PrevSelectedSelector: HTMLSelectElement | null = null;
     SelectTypeSelect.onchange = () =>
     {
         const SelectedIndex = SelectTypeSelect.selectedIndex;
@@ -377,23 +383,19 @@ function NewCatFields(ScriptNames: string[], Name: string, Conditions: string): 
             const SelectorTypeOptionsIndex = Number(SelectTypeSelect.value);
             switch(SelectorTypeOptions[SelectorTypeOptionsIndex])
             {
-                case "Pattern":
+                case "Capture":
                 {
                     PatternSelect.style.display = "block";
-                    if (PrevSelectedSelector !== null)
-                    {
-                        (PrevSelectedSelector as HTMLSelectElement).style.display = "none";
-                    }
-                    PrevSelectedSelector = PatternSelect;
+                    OffsetSlider.style.display = "block";
+
+                    ScriptSelect.style.display = "none";
                 } break;
                 case "Script":
                 {
                     ScriptSelect.style.display = "block";
-                    if (PrevSelectedSelector !== null)
-                    {
-                        (PrevSelectedSelector as HTMLSelectElement).style.display = "none";
-                    }
-                    PrevSelectedSelector = ScriptSelect;
+
+                    PatternSelect.style.display = "none";
+                    OffsetSlider.style.display = "none";
                 } break;
                 default:
                 {
@@ -432,6 +434,31 @@ function LastSelectedPatternInput(): HTMLInputElement | null
     return null;
 }
 
+function HighlightCapture(RePattern: string, SliderOffset: number = 0): void
+{
+    const TextAreaText = (TryGetElementByID("text-area") as HTMLTextAreaElement).value;
+    const PreText = TryGetElementByID("pre-text");
+    let SpanifiedText = "";
+    let Offset = 0;
+    const Re = RegExp(RePattern, "gi"); //TODO(cjb): What flags do I pass here?
+    let Matches: RegExpExecArray | null;
+    while ((Matches = Re.exec(TextAreaText)) !== null)
+    {
+        const Match = Matches[0];
+        const SO = Re.lastIndex - Match.length;
+        const EO = Re.lastIndex;
+        const LHS = TextAreaText.substring(Offset, SO);
+        const RHS = '<span class="noice">' + TextAreaText.substring(SO, EO + SliderOffset) + '</span>';
+
+        SpanifiedText += LHS + RHS;
+        Offset = EO + SliderOffset;
+
+        break;
+    }
+	SpanifiedText += TextAreaText.substring(Offset);
+    PreText.innerHTML = SpanifiedText;
+}
+
 function UpdateSelectedPattern(TargetPatternInput: HTMLInputElement): void
 {
     const PrevSelectedPatternInput = LastSelectedPatternInput();
@@ -440,28 +467,7 @@ function UpdateSelectedPattern(TargetPatternInput: HTMLInputElement): void
         PrevSelectedPatternInput.setAttribute("IsSelected", "false");
     }
     TargetPatternInput.setAttribute("IsSelected", "true");
-
-    const TextAreaText = (TryGetElementByID("text-area") as HTMLTextAreaElement).value;
-    const PreText = TryGetElementByID("pre-text");
-    let SpanifiedText = "";
-    let Offset = 0;
-    const Re = RegExp(TargetPatternInput.value, "gi"); //TODO(cjb): What flags do I pass here?
-    let Matches: RegExpExecArray | null;
-    while ((Matches = Re.exec(TextAreaText)) !== null)
-    {
-        const Match = Matches[0];
-        const SO = Re.lastIndex - Match.length;
-        const EO = Re.lastIndex;
-        const LHS = TextAreaText.substring(Offset, SO);
-        const RHS = '<span class="noice">' + TextAreaText.substring(SO, EO) + '</span>';
-
-        SpanifiedText += LHS + RHS;
-        Offset = EO;
-
-        break;
-    }
-	SpanifiedText += TextAreaText.substring(Offset);
-    PreText.innerHTML = SpanifiedText;
+    HighlightCapture(TargetPatternInput.value);
 }
 
 function AddPattern(Pattern: string): void
@@ -602,6 +608,7 @@ function ImportJSONConfig(S: protex_state, E: Event): void
     }
 
     // Get first file ( should  only be one anyway )
+
     const Files = ((E.target as HTMLInputElement).files as FileList);
     if (Files.length == 0)
     {
@@ -668,39 +675,28 @@ function GenJSONConfig(Extractors: extr_def[]): string
             const CategoryContainer = TryGetElementByID("category-container");
 
             let FirstOpBoxIndex: number = -1;
-            let DraggableContainerIndex: number = 0;
+            let BoxIndex: number = 0;
             const OpBoxes = CategoryContainer.getElementsByClassName("draggable-container");
-            for (const DraggableContainer of OpBoxes)
+            for (const Box of OpBoxes)
             {
-                const LeftConnecter = TryGetElementByClassName(
-                    DraggableContainer, "draggable-container-connecter-left");
+                const [LeftNub, RightNub] = NubsFromContainer(Box);
 
-                const LeftLineIndex = LeftConnecter.getAttribute("LineIndex");
-                Assert(LeftLineIndex !== null, "LineIndex attribute was null.");
-
-                if (Number(LeftLineIndex) === -1)
+                if (RightNub.LineIndices.length === 0)
                 {
-                    const RightConnecter = TryGetElementByClassName(
-                       DraggableContainer, "draggable-container-connecter-right");
-
-                    const RightLineIndex = RightConnecter.getAttribute("LineIndex");
-                    Assert(RightLineIndex !== null, "LineIndex attribute was null.");
-
-                    if (Number(RightLineIndex) >= 0)
-                    {
-                        if (FirstOpBoxIndex !== -1)
-                        {
-                            Assert(false, "Found multiple start paths.");
-                        }
-                        FirstOpBoxIndex = DraggableContainerIndex;
-                    }
-                    else
+                    if (LeftNub.LineIndices.length === 0)
                     {
                         Assert(false, "Box with no connections");
                     }
+
+                    if (FirstOpBoxIndex !== -1)
+                    {
+                        Assert(false, "Found multiple end paths.");
+                    }
+
+                    FirstOpBoxIndex = BoxIndex;
                 }
 
-                DraggableContainerIndex += 1;
+                BoxIndex += 1;
             }
             Assert(FirstOpBoxIndex !== -1, "No valid starting op box.");
 
@@ -712,7 +708,7 @@ function GenJSONConfig(Extractors: extr_def[]): string
                     CurrOpBox, "select-type-select") as HTMLSelectElement;
                 switch(Number(SelectTypeSelect.value))
                 {
-                    case 0: // TODO(cjb) FIXME pattern
+                    case 0: // TODO(cjb) FIXME capture
                     {
                         const PatternSelect = TryGetElementByClassName(
                             CurrOpBox, "pattern-select") as HTMLSelectElement;
@@ -858,6 +854,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     AContainer.appendChild(ToolbarContainer);
 
     // Import existing configuration input
+
     const ImportConfigInput = document.createElement("input");
     ImportConfigInput.id = "import-config-input";
     ImportConfigInput.setAttribute("accept", ".json");
