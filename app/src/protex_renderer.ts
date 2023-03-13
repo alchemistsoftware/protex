@@ -1,6 +1,12 @@
-import {cat_def, extr_def, protex_window, protex_state, html_nub} from "./protex_renderer_include";
+import {cat_def, extr_def, protex_window,
+        protex_state, html_nub, op} from "./protex_renderer_include";
 
 const ProtexWindow = window as unknown as protex_window;
+
+function Declare<T>(): T
+{
+    return {} as T;
+}
 
 function Assert(ExprTruthiness: boolean, DEBUGMsg: string): void
 {
@@ -14,6 +20,78 @@ function Assert(ExprTruthiness: boolean, DEBUGMsg: string): void
 
         throw DEBUGMsg;
     }
+}
+
+function OperationQueueFromLeaf(OpBoxes: HTMLCollectionOf<Element>, LeafOpBox: Element): op[]
+{
+    let NewOperationQueue = []
+    let CurrOpBox = LeafOpBox;
+    let FoundRoot = false;
+    while (!FoundRoot)
+    {
+        const SelectTypeSelect = TryGetElementByClassName(
+            CurrOpBox, "select-type-select") as HTMLSelectElement;
+
+        let NewOp = Declare<op>();
+        switch(Number(SelectTypeSelect.value))
+        {
+            case 0: // TODO(cjb) FIXME capture
+            {
+                const PatternSelect = TryGetElementByClassName(
+                    CurrOpBox, "pattern-select") as HTMLSelectElement;
+                Assert(PatternSelect.value !== "", "PatternSelect was empty.");
+                NewOp = {Pattern: PatternSelect.value};
+
+            } break;
+            case 1: // TODO(cjb) FIXME script
+            {
+                const ScriptSelect = TryGetElementByClassName(
+                    CurrOpBox, "script-select") as HTMLSelectElement;
+                Assert(ScriptSelect.value !== "", "ScriptSelect was empty.");
+                NewOp = {PyModule: ScriptSelect.value};
+            } break;
+            default:
+            {
+                Assert(false, "Fell through selector type options switch.");
+            } break;
+        }
+        NewOperationQueue.push(NewOp);
+
+        // Move to parent op box
+
+        const [_, CurrRightNub] = NubsFromContainer(CurrOpBox);
+        Assert(((CurrRightNub.LineIndices.length === 1) ||
+                (CurrRightNub.LineIndices.length === 0)), "Expected length of 1 or 0");
+
+        if (CurrRightNub.LineIndices.length === 0)
+        {
+            FoundRoot = true;
+        }
+        else
+        {
+            CurrOpBox = OpBoxFromRightLineIndex(OpBoxes,
+                CurrRightNub.LineIndices[0]) as Element;
+        }
+    }
+
+    return NewOperationQueue;
+}
+
+function OpBoxFromRightLineIndex(
+    OpBoxes: HTMLCollectionOf<Element>, RightLineIndex: number): Element | undefined
+{
+    for (const Box of OpBoxes)
+    {
+        const [LeftNub, _] = NubsFromContainer(Box);
+        for (const LeftLineIndex of LeftNub.LineIndices)
+        {
+            if (RightLineIndex === LeftLineIndex)
+            {
+                return Box;
+            }
+        }
+    }
+    Assert(false, `No LeftLineIndex matching ${RightLineIndex}`);
 }
 
 function NubsFromContainer(Container: Element): [html_nub, html_nub]
@@ -674,106 +752,53 @@ function GenJSONConfig(Extractors: extr_def[]): string
 
             const CategoryContainer = TryGetElementByID("category-container");
 
-            let FirstOpBoxIndex: number = -1;
+            let LastOpBoxIndex: number = -1;
             let BoxIndex: number = 0;
             const OpBoxes = CategoryContainer.getElementsByClassName("draggable-container");
-            for (const Box of OpBoxes)
+//            for (const Box of OpBoxes)
+//            {
+//                const [LeftNub, RightNub] = NubsFromContainer(Box);
+//
+//                if (RightNub.LineIndices.length === 0)
+//                {
+//                    if (LeftNub.LineIndices.length === 0)
+//                    {
+//                        Assert(false, "Box with no connections");
+//                    }
+//
+//                    if (LastOpBoxIndex !== -1)
+//                    {
+//                        Assert(false, "Found multiple end paths.");
+//                    }
+//
+//                    LastOpBoxIndex = BoxIndex;
+//                }
+//
+//                BoxIndex += 1;
+//            }
+//            Assert(LastOpBoxIndex !== -1, "No valid starting op box.");
+
+            let Operations: op[][] = [];
+            for (const OpBox of OpBoxes)
             {
-                const [LeftNub, RightNub] = NubsFromContainer(Box);
-
-                if (RightNub.LineIndices.length === 0)
+                const [LeftNub, _] = NubsFromContainer(OpBox);
+                if (LeftNub.LineIndices.length === 0)
                 {
-                    if (LeftNub.LineIndices.length === 0)
-                    {
-                        Assert(false, "Box with no connections");
-                    }
-
-                    if (FirstOpBoxIndex !== -1)
-                    {
-                        Assert(false, "Found multiple end paths.");
-                    }
-
-                    FirstOpBoxIndex = BoxIndex;
+                    Operations.push(OperationQueueFromLeaf(OpBoxes, OpBox));
                 }
-
-                BoxIndex += 1;
-            }
-            Assert(FirstOpBoxIndex !== -1, "No valid starting op box.");
-
-            let ConditionsJSON: any = {}; // TODO(cjb): NOT A STRINIGIFIEDD JSON obj.....
-            let CurrOpBox = OpBoxes[FirstOpBoxIndex];
-            while(true)
-            {
-                const SelectTypeSelect = TryGetElementByClassName(
-                    CurrOpBox, "select-type-select") as HTMLSelectElement;
-                switch(Number(SelectTypeSelect.value))
-                {
-                    case 0: // TODO(cjb) FIXME capture
-                    {
-                        const PatternSelect = TryGetElementByClassName(
-                            CurrOpBox, "pattern-select") as HTMLSelectElement;
-                        Assert(PatternSelect.value !== "", "PatternSelect was empty.");
-                        ConditionsJSON.Pattern = PatternSelect.value;
-                    } break;
-                    case 1: // TODO(cjb) FIXME script
-                    {
-                        const ScriptSelect = TryGetElementByClassName(
-                            CurrOpBox, "script-select") as HTMLSelectElement;
-                        Assert(ScriptSelect.value !== "", "ScriptSelect was empty.");
-                        ConditionsJSON.Script = ScriptSelect.value;
-                    } break;
-                    default:
-                    {
-                        Assert(false, "Fell through selector type options switch.");
-                    } break;
-                }
-
-                const RightConnecter = TryGetElementByClassName(
-                   CurrOpBox, "draggable-container-connecter-right");
-
-                const RightLineIndex = RightConnecter.getAttribute("LineIndex");
-                Assert(RightLineIndex !== null, "LineIndex attribute was null.");
-
-                if (Number(RightLineIndex) === -1)
-                {
-                    break;
-                }
-
-                let NextBoxIndex: number = -1;
-                let BoxIndex: number = 0;
-                for (const Box of OpBoxes)
-                {
-                    const LeftConnecter = TryGetElementByClassName(
-                        Box, "draggable-container-connecter-left");
-
-                    const LeftLineIndex = LeftConnecter.getAttribute("LineIndex");
-                    Assert(LeftLineIndex !== null, "LineIndex attribute was null.");
-
-                    if (Number(RightLineIndex) === Number(LeftLineIndex))
-                    {
-                        NextBoxIndex = BoxIndex;
-                        break;
-                    }
-
-                    BoxIndex += 1;
-                }
-                Assert(NextBoxIndex !== -1, "NextBoxIndex was -1");
-
-                CurrOpBox = OpBoxes[NextBoxIndex];
             }
 
-            ExtrDef.Categories = [];
-            ExtrDef.Categories.push({
-                Name: "DEBUGNAME",
-                Conditions: JSON.stringify(ConditionsJSON),
-            });
+            console.log(Operations);
+
+            //ExtrDef.Categories = [];
+            //ExtrDef.Categories.push({
+            //    Name: "DEBUGNAME",
+            //    Conditions: JSON.stringify(ConditionsJSON),
+            //});
         }
     });
 
-    console.log({ConfName: ConfName,
-        ExtractorDefinitions: Extractors});
-    return JSON.stringify({ConfName: ConfName,
-        ExtractorDefinitions: Extractors});
+    return JSON.stringify({});
 }
 
 function EscapeRegex(Regex: string): string
@@ -1155,6 +1180,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         if ((E as KeyboardEvent).key === "Enter")
         {
             // Toggle TA selection
+
             PreText.style.display = "none";
             TA.style.display = "inline-block";
             TA.focus();
@@ -1163,6 +1189,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     PreText.onclick = () =>
     {
         // Toggle TA selection
+
         PreText.style.display = "none";
         TA.style.display = "inline-block";
         TA.focus();
@@ -1229,6 +1256,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     AContainer.appendChild(DEBUGTextInfo);
 
     // Ascii fox by Brian Kendig
+
     const AsciiFox4Motivation = document.createElement("pre");
     AsciiFox4Motivation.className = "bottomright";
     AsciiFox4Motivation.innerText = `
