@@ -1,5 +1,11 @@
-import {cat_def, extr_def, protex_window,
-        protex_state, html_nub, op} from "./protex_renderer_include";
+import {extr_def, protex_window, protex_state,
+								html_nub, op} from "./protex_renderer_include";
+
+enum op_type //TODO(cjb): GET ME EXPORTING IN renderer_include.ts !!!!
+{
+    pymodule = 0,
+				capture,
+};
 
 const ProtexWindow = window as unknown as protex_window;
 
@@ -40,15 +46,21 @@ function OperationQueueFromLeaf(OpBoxes: HTMLCollectionOf<Element>, LeafOpBox: E
                 const PatternSelect = TryGetElementByClassName(
                     CurrOpBox, "pattern-select") as HTMLSelectElement;
                 Assert(PatternSelect.value !== "", "PatternSelect was empty.");
-                NewOp = {Pattern: PatternSelect.value};
+
+																const OffsetSlider = TryGetElementByClassName(
+                    CurrOpBox, "capture-offset-slider") as HTMLSelectElement;
+
+														 	NewOp = {Type: op_type.capture,
+															 									Data: {Pattern: PatternSelect.value, Offset: Number(OffsetSlider.value)}};
 
             } break;
-            case 1: // TODO(cjb) FIXME script
+            case 1: // TODO(cjb) // TODO(cjb): FIXME pymoudle
             {
                 const ScriptSelect = TryGetElementByClassName(
                     CurrOpBox, "script-select") as HTMLSelectElement;
                 Assert(ScriptSelect.value !== "", "ScriptSelect was empty.");
-                NewOp = {PyModule: ScriptSelect.value};
+                NewOp = {Type: op_type.pymodule,
+																									Data: {ScriptName: ScriptSelect.value}};
             } break;
             default:
             {
@@ -316,8 +328,10 @@ function MakeDraggable(Elmnt: HTMLElement): void
     }
 }
 
-function NewCatFields(ScriptNames: string[], Name: string, Conditions: string): void
+function MakeOpBox(ScriptNames: string[], Op: op): void
 {
+    const _ = Op; //TODO(cjb): Acutally build from existing op struct.
+
     const CategoryContainer = TryGetElementByID("category-container");
 
     const DraggableContainer = document.createElement("div");
@@ -485,21 +499,17 @@ function NewCatFields(ScriptNames: string[], Name: string, Conditions: string): 
 
 }
 
-function AddEmptyCat(ScriptNames: string[], ExtrDef: extr_def): void
-{
-    AddCat(ScriptNames, ExtrDef, "", "");
-}
+//function AddEmptyOpBox(ScriptNames: string[], ExtrDef: extr_def): void
+//{
+//				let Op = Declare<op>();
+//    AddCat(ScriptNames, ExtrDef, Op);
+//}
 
-//TODO(cjb): Get category/conditions in toolbar as well.
-function AddCat(ScriptNames: string[], ExtrDef: extr_def, Name: string, Conditions: string): void
-{
-    let Cat = {
-        Name: Name,
-        Conditions: Conditions,
-    };
-    ExtrDef.Categories.push(Cat);
-    NewCatFields(ScriptNames, Name, Conditions);
-}
+//function AddOpBox(ScriptNames: string[], ExtrDef: extr_def, Op: op): void
+//{
+//    ExtrDef.Operations.push(Cat);
+//    MakeOpBox(ScriptNames, Name, Conditions);
+//}
 
 function LastSelectedPatternInput(): HTMLInputElement | null
 {
@@ -618,12 +628,12 @@ function AddEmptyExtr(Extrs: extr_def[], ExtrName: string): void
     AddExtr(Extrs, ExtrName, [], []);
 }
 
-function AddExtr(Extrs: extr_def[], ExtrName: string, Patterns: string[], Cats: cat_def[]): void
+function AddExtr(Extrs: extr_def[], ExtrName: string, Patterns: string[], Ops: op[][]): void
 {
     AddExtrSelectOption(ExtrName);
     Extrs.push({
         Name: ExtrName,
-        Categories: Cats.slice(0),
+        OperationQueues: Ops.slice(0),
         Patterns: Patterns.slice(0),
     });
 }
@@ -707,7 +717,7 @@ function ImportJSONConfig(S: protex_state, E: Event): void
                 AddExtr(S.Extractors, ExtrDef.Name, ExtrDef.Patterns, ExtrDef.Categories);
                 for (const Cat of ExtrDef.Categories)
                 {
-                    AddCat(S.ScriptNames, S.Extractors[ExtrDefIndex], Cat.Name, Cat.Conditions);
+                    //AddCat(S.ScriptNames, S.Extractors[ExtrDefIndex], Cat.Name, Cat.Conditions);
                 }
 
                 for (const P of ExtrDef.Patterns)
@@ -719,7 +729,7 @@ function ImportJSONConfig(S: protex_state, E: Event): void
             {
                 S.Extractors.push({
                     Name: ExtrDef.Name,
-                    Categories: ExtrDef.Categories.slice(0),
+                    OperationQueues: ExtrDef.OperationQueues.slice(0),
                     Patterns: ExtrDef.Patterns.slice(0)
                 });
             }
@@ -752,53 +762,23 @@ function GenJSONConfig(Extractors: extr_def[]): string
 
             const CategoryContainer = TryGetElementByID("category-container");
 
-            let LastOpBoxIndex: number = -1;
-            let BoxIndex: number = 0;
             const OpBoxes = CategoryContainer.getElementsByClassName("draggable-container");
-//            for (const Box of OpBoxes)
-//            {
-//                const [LeftNub, RightNub] = NubsFromContainer(Box);
-//
-//                if (RightNub.LineIndices.length === 0)
-//                {
-//                    if (LeftNub.LineIndices.length === 0)
-//                    {
-//                        Assert(false, "Box with no connections");
-//                    }
-//
-//                    if (LastOpBoxIndex !== -1)
-//                    {
-//                        Assert(false, "Found multiple end paths.");
-//                    }
-//
-//                    LastOpBoxIndex = BoxIndex;
-//                }
-//
-//                BoxIndex += 1;
-//            }
-//            Assert(LastOpBoxIndex !== -1, "No valid starting op box.");
 
-            let Operations: op[][] = [];
+            let OperationQueues: op[][] = [];
             for (const OpBox of OpBoxes)
             {
                 const [LeftNub, _] = NubsFromContainer(OpBox);
                 if (LeftNub.LineIndices.length === 0)
                 {
-                    Operations.push(OperationQueueFromLeaf(OpBoxes, OpBox));
+                    OperationQueues.push(OperationQueueFromLeaf(OpBoxes, OpBox));
                 }
             }
 
-            console.log(Operations);
-
-            //ExtrDef.Categories = [];
-            //ExtrDef.Categories.push({
-            //    Name: "DEBUGNAME",
-            //    Conditions: JSON.stringify(ConditionsJSON),
-            //});
-        }
+            ExtrDef.OperationQueues = OperationQueues.slice(0);
+								}
     });
 
-    return JSON.stringify({});
+    return JSON.stringify({Extractors: Extractors, ConfName: ConfName});
 }
 
 function EscapeRegex(Regex: string): string
@@ -1001,7 +981,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
             (PrevSelectedExtractorIndex !== ExtractorSelect.length - 1))
         {
             const ExtrToSave  = S.Extractors[PrevSelectedExtractorIndex];
-            ExtrToSave.Categories = [];
+            ExtrToSave.OperationQueues = [];
             ExtrToSave.Patterns = []
 
             const PatternsContainer = TryGetElementByID("patterns-container");
@@ -1028,10 +1008,10 @@ ProtexWindow.ProtexAPI.GetScriptNames()
                     break;
                 }
 
-                ExtrToSave.Categories.push({
-                    Name: (CatNames[CatItemIndex] as HTMLInputElement).value,
-                    Conditions: (Conditionses[CatItemIndex] as HTMLInputElement).value
-                });
+                //ExtrToSave.Categories.push({
+                //    Name: (CatNames[CatItemIndex] as HTMLInputElement).value,
+                //    Conditions: (Conditionses[CatItemIndex] as HTMLInputElement).value
+                //});
 
                 CatItemIndex += 1
             }
@@ -1057,12 +1037,12 @@ ProtexWindow.ProtexAPI.GetScriptNames()
                 {
                     ExtractorSelect.selectedIndex = PrevSelectedExtractorIndex;
 
-                    // NOTE(cjb): Because we are allways removing cat dom elements if you cancel
+                    // NOTE(cjb): Because we are allways removing op dom elements if you cancel
                     // adding an extractor restore it's dom elements.
 
-                    for (const Cat of S.Extractors[ExtractorSelect.selectedIndex].Categories)
+                    for (const Ops of S.Extractors[ExtractorSelect.selectedIndex].OperationQueues)
                     {
-                        NewCatFields(S.ScriptNames, Cat.Name, Cat.Conditions);
+                        MakeOpBox(S.ScriptNames, Ops[0]); //TODO(cjb): FIXME
                     }
                     for (const P of S.Extractors[ExtractorSelect.selectedIndex].Patterns)
                     {
@@ -1082,10 +1062,11 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         }
         else // Otherwise switch extractors
         {
-            for (const Cat of S.Extractors[ExtractorSelect.selectedIndex].Categories)
+            for (const Ops of S.Extractors[ExtractorSelect.selectedIndex].OperationQueues)
             {
-                NewCatFields(S.ScriptNames, Cat.Name, Cat.Conditions);
-            }
+
+                MakeOpBox(S.ScriptNames, Ops[0]); //TODO(cjb): FIXME
+												}
             for (const P of S.Extractors[ExtractorSelect.selectedIndex].Patterns)
             {
                 AddPattern(P);
@@ -1209,17 +1190,21 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         {
             if (S.Extractors.length > 0) // Have at least 1 extractor?
             {
-                AddEmptyCat(S.ScriptNames, S.Extractors[ExtractorSelect.selectedIndex]);
+                //AddEmptyCat(S.ScriptNames, S.Extractors[ExtractorSelect.selectedIndex].OperationQueues);
+																const BannanaOp = Declare<op>(); //TODO(cjb): FIXME.
+												    MakeOpBox(S.ScriptNames, BannanaOp);
             }
             else // TODO(cjb): Actually save categories and patterns to anon extractor def.
             {
-                const FakeExtr: extr_def = {
-                    Name: "fakiemcfake",
-                    Patterns: [],
-                    Categories: []
-                };
-                AddEmptyCat(S.ScriptNames, FakeExtr);
-            }
+                //const FakeExtr: extr_def = {
+                //    Name: "fakiemcfake",
+                //    Patterns: [],
+                //    OperationQueues: []
+                //};
+                //AddEmptyCat(S.ScriptNames, FakeExtr);
+																const BannanaOp = Declare<op>(); //TODO(cjb): FIXME.
+												    MakeOpBox(S.ScriptNames, BannanaOp);
+												}
         }
     }
 
@@ -1266,5 +1251,4 @@ ProtexWindow.ProtexAPI.GetScriptNames()
      _/  __   __/
     /___/____/
     v0.5.0-alpha`;
-    AContainer.appendChild(AsciiFox4Motivation);
-}); // GetPyModule
+    AContainer.appendChild(AsciiFox4Motivation); }); // GetPyModule

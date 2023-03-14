@@ -200,62 +200,82 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
         defer std.heap.raw_c_allocator.free(SerializedDBBytes.?[0 .. nSerializedDBBytes]);
 
 //
-// Write extractor definition header and it's data. Then proceed to write the category
+// Write extractor definition header and it's data. Then proceed to write the operation
 // headers and their data as well.
 //
-        const Categories = Extractor.Object.get("Categories") orelse unreachable;
+
+        const OperationQueues = Extractor.Object.get("OperationQueues") orelse unreachable;
         const ExtractorName = Extractor.Object.get("Name") orelse unreachable;
         const DefHeader = common.arti_def_header{
             .nExtractorNameBytes = ExtractorName.String.len,
             .DatabaseSize = nSerializedDBBytes,
-            .nCategories = Categories.Array.items.len,
+            .nOperationQueues = OperationQueues.Array.items.len,
             .nPatterns = PatternsZ.items.len
         };
         try ArtiF.writer().writeStruct(DefHeader);
         try ArtiF.writeAll(ExtractorName.String);
         try ArtiF.writeAll(SerializedDBBytes.?[0 .. nSerializedDBBytes]);
 
-        for (Categories.Array.items) |Cat|
+        for (OperationQueues.Array.items) |Ops|
         {
-            const CatName = Cat.Object.get("Name") orelse unreachable;
-            const Conditions = Cat.Object.get("Conditions") orelse unreachable;
+												const QHeader = common.arti_op_q_header{.nOps = Ops.Array.items.len};
+												try ArtiF.writer().writeStruct(QHeader);
 
-            var CondItr = std.mem.tokenize(u8, Conditions.String, " ");
-            while (CondItr.next()) |Tok|
-            {
-                if (std.mem.eql(u8, Tok, "CALL"))
+												for (Ops.Array.items) |JSONOp|
+												{
+																const Data = JSONOp.Object.get("Data") orelse unreachable;
+																const Type	= JSONOp.Object.get("Type") orelse unreachable;
+																switch(@intToEnum(common.op_type, Type.Integer))
                 {
-                    break;
-                }
-            }
+																				common.op_type.PyModule =>
+																				{
+								                const ScriptName = Data.Object.get("ScriptName") orelse unreachable;
+																								const NoExtScriptName = std.fs.path.stem(ScriptName.String);
 
-            // Next conditr should be name of python plugin
+                        // Read module name and compute index of MainPyModule within PyModuleNames.
 
-            const ScriptName = CondItr.next() orelse "";
-            const NoExtScriptName = std.fs.path.stem(ScriptName);
+                        var MainModuleIndex: isize = -1;
+                        for (PyModuleNames.items) |ModuleName, ModuleIndex|
+                        {
+                            if (std.mem.eql(u8, NoExtScriptName, ModuleName))
+                            {
+                                MainModuleIndex = @intCast(isize, ModuleIndex);
+                                break;
+                            }
+                        }
+                        std.debug.assert(MainModuleIndex >= 0);
 
-            // Read module name and compute index of MainPyModule within PyModuleNames.
+																								try ArtiF.writer().writeInt(usize, @enumToInt(common.op_type.PyModule),
+																												std.builtin.Endian.Little);
 
-            var MainModuleIndex: isize = -1;
-            for (PyModuleNames.items) |ModuleName, ModuleIndex|
-            {
-                if (std.mem.eql(u8, NoExtScriptName, ModuleName))
-                {
-                    MainModuleIndex = @intCast(isize, ModuleIndex);
-                    break;
-                }
-            }
-            std.debug.assert(MainModuleIndex >= 0);
+	                       const NewOp = common.arti_op{
+	                           .PyModule = .{
+																												    .Index = @intCast(usize, MainModuleIndex),
+																												},
+                        };
 
-            const CatHeader = common.arti_cat_header{
-                .nCategoryNameBytes = CatName.String.len,
-                .nCategoryConditionBytes = Conditions.String.len,
-                .MainPyModuleIndex = @intCast(usize, MainModuleIndex),
-            };
+																								try ArtiF.writer().writeAll(std.mem.asBytes(&NewOp));
 
-            try ArtiF.writer().writeStruct(CatHeader);
-            try ArtiF.writeAll(CatName.String);
-            try ArtiF.writeAll(Conditions.String);
+																				},
+																				common.op_type.Capture =>
+																				{
+																								const Pattern = Data.Object.get("Pattern") orelse unreachable;
+                        const Offset = Data.Object.get("Offset") orelse unreachable;
+
+																								try ArtiF.writer().writeInt(usize, @enumToInt(common.op_type.Capture),
+																												std.builtin.Endian.Little);
+
+	                       const NewOp = common.arti_op{
+	                           .Capture = .{
+																																.PatternID = @intCast(usize, Pattern.Integer),
+																																.Offset = @intCast(usize, Offset.Integer),
+																												},
+																								};
+
+																								try ArtiF.writer().writeAll(std.mem.asBytes(&NewOp));
+																				},
+																}
+												}
         }
     }
 }

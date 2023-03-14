@@ -1,39 +1,40 @@
-
-export type cat_def =
-{
-    Name: string,
-    Conditions: string,
-};
-
 export type extr_def =
 {
     Name: string,
-    Categories: cat_def[],
+    OperationQueues: op[][],
     Patterns: string[],
 };
 
 export type op_capture =
 {
     Pattern: string,
+				Offset: number,
 };
 
 export type op_pymodule =
 {
-    PyModule: string,
+    ScriptName: string,
 };
 
-export type op = op_pymodule | op_capture;
+export type op_data = op_pymodule | op_capture;
 
-//export type op =
-//{
-//    Data: op_data,
-//};
+
+enum op_type
+{
+    pymodule = 0,
+    capture,
+};
+
+export type op =
+{
+    Type: op_type,
+    Data: op_data,
+};
 
 export type protex_api =
 {
     GetScriptNames: () => any,
-    WriteConfig: (ConfigStr: string) => any,
-    WriteScript: (ScriptName: string, Src: string) => any,
+    WriteConfig: (ConfigStr: string) => any, WriteScript: (ScriptName: string, Src: string) => any,
     ReadScript: (ScriptName: string) => any,
     RunExtractor: (ConfigName: string, Text: string) => any,
 };
