@@ -125,7 +125,6 @@ This project adheres to [semver](https://semver.org/)
 - VERY EARLY embeded python 11 support
 
 ## [0.0.1-alpha] - 11-25-22
-
 ### Added
 - Slab alloactor
 - Debug slab visualizer

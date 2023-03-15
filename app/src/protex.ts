@@ -155,7 +155,7 @@ const CreateWindow = () =>
         width: MinWidth,
         height: MinHeight,
         webPreferences: {
-            preload: path.join(__dirname, "preload.js")
+            preload: path.join(__dirname, "protex_preload.js")
         }
     });
     Win.setMinimumSize(MinWidth, MinHeight);

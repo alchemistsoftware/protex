@@ -7,8 +7,8 @@ export type extr_def =
 
 export type op_capture =
 {
-    Pattern: string,
-				Offset: number,
+    PatternID: number,
+    Offset: number,
 };
 
 export type op_pymodule =

@@ -1,10 +1,9 @@
-import {extr_def, protex_window, protex_state,
-								html_nub, op} from "./protex_renderer_include";
+import {extr_def, protex_window, protex_state, html_nub, op} from "./protex_renderer_include";
 
 enum op_type //TODO(cjb): GET ME EXPORTING IN renderer_include.ts !!!!
 {
     pymodule = 0,
-				capture,
+    capture,
 };
 
 const ProtexWindow = window as unknown as protex_window;
@@ -47,20 +46,18 @@ function OperationQueueFromLeaf(OpBoxes: HTMLCollectionOf<Element>, LeafOpBox: E
                     CurrOpBox, "pattern-select") as HTMLSelectElement;
                 Assert(PatternSelect.value !== "", "PatternSelect was empty.");
 
-																const OffsetSlider = TryGetElementByClassName(
-                    CurrOpBox, "capture-offset-slider") as HTMLSelectElement;
-
-														 	NewOp = {Type: op_type.capture,
-															 									Data: {Pattern: PatternSelect.value, Offset: Number(OffsetSlider.value)}};
-
+                const OffsetSlider = TryGetElementByClassName(CurrOpBox,
+                    "capture-offset-slider") as HTMLSelectElement;
+                NewOp = {Type: op_type.capture, Data: {PatternID:
+                    Number(PatternSelect.options[PatternSelect.selectedIndex].value),
+                    Offset: Number(OffsetSlider.value)}};
             } break;
             case 1: // TODO(cjb) // TODO(cjb): FIXME pymoudle
             {
                 const ScriptSelect = TryGetElementByClassName(
                     CurrOpBox, "script-select") as HTMLSelectElement;
                 Assert(ScriptSelect.value !== "", "ScriptSelect was empty.");
-                NewOp = {Type: op_type.pymodule,
-																									Data: {ScriptName: ScriptSelect.value}};
+                NewOp = {Type: op_type.pymodule,  Data: {ScriptName: ScriptSelect.value}};
             } break;
             default:
             {
@@ -391,11 +388,12 @@ function MakeOpBox(ScriptNames: string[], Op: op): void
     {
         PatternSelect.innerHTML = "";
         const PatternsContainer = TryGetElementByID("patterns-container");
+        let PatternIndex = 0;
         for (const Elem of PatternsContainer.getElementsByClassName("pattern-input"))
         {
             const NewOption = document.createElement("option");
             NewOption.text = (Elem as HTMLInputElement).value;
-            NewOption.value = (Elem as HTMLInputElement).value;
+            NewOption.value = String(PatternIndex++);
             PatternSelect.add(NewOption);
         }
     }
@@ -412,16 +410,21 @@ function MakeOpBox(ScriptNames: string[], Op: op): void
     OffsetSlider.style.display = "none";
     OffsetSlider.oninput = () =>
     {
-        HighlightCapture(PatternSelect.value, Number(OffsetSlider.value));
+        if (PatternSelect.selectedIndex !== -1)
+        {
+            HighlightCapture(PatternSelect.options[PatternSelect.selectedIndex].text,
+                Number(OffsetSlider.value));
+        }
     };
 
     for (const Elem of [DraggableContainer, DraggableContainerHeader, DraggableContainerContents])
     {
         Elem.onmouseover = () =>
         {
-            if (SelectTypeSelect.value === "0")
+            if (SelectTypeSelect.value === "0" && PatternSelect.selectedIndex !== -1)
             {
-                HighlightCapture(PatternSelect.value, Number(OffsetSlider.value));
+                HighlightCapture(PatternSelect.options[PatternSelect.selectedIndex].text,
+                    Number(OffsetSlider.value));
             }
         };
 

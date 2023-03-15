@@ -1,5 +1,5 @@
 {
-  "main": "./src/main.js",
+  "main": "./src/protex.js",
   "name":"protex",
   "description":"programmable text classifier and extractor",
   "version": "0.4.0-alpha",

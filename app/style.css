@@ -175,6 +175,10 @@ div.draggable-container-contents{
     overflow: hidden;
 }
 
+.capture-offset-slider{
+    width: 100%;
+}
+
 .draggable-container-connecter-left{
     top: 50%;
     left: -3%;

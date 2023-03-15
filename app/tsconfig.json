@@ -1,12 +1,13 @@
 {
   "compilerOptions": {
-    "target": "es2016",   /* Set the JavaScript language version for emitted JavaScript and include compatible library declarations. */
-    "module": "commonjs", /* Specify what module code is generated. */
+    "target": "es6",   /* Set the JavaScript language version for emitted JavaScript and include compatible library declarations. */
+    "module": "commonjs",
     "strict": true,       /* Enable all strict type-checking options. */
   },
   "files": [
-      "./src/main.ts",
-      "./src/preload.ts",
-      "./src/renderer.ts"
+      "./src/protex.ts",
+      "./src/protex_preload.ts",
+      "./src/protex_renderer_include.ts",
+      "./src/protex_renderer.ts"
   ]
 }
