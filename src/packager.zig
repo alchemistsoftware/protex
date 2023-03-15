@@ -49,7 +49,7 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
     defer Ally.free(ConfBytes);
     var Parser = std.json.Parser.init(Ally, false); const ParseTree = try Parser.parse(ConfBytes);
     const PyIncludePath = ParseTree.root.Object.get("PyIncludePath") orelse unreachable;
-    const Extractors = ParseTree.root.Object.get("ExtractorDefinitions") orelse unreachable;
+    const Extractors = ParseTree.root.Object.get("Extractors") orelse unreachable;
 
 //
 // Create artifact file and write initial header.
@@ -218,19 +218,19 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
 
         for (OperationQueues.Array.items) |Ops|
         {
-												const QHeader = common.arti_op_q_header{.nOps = Ops.Array.items.len};
-												try ArtiF.writer().writeStruct(QHeader);
+            const QHeader = common.arti_op_q_header{.nOps = Ops.Array.items.len};
+            try ArtiF.writer().writeStruct(QHeader);
 
-												for (Ops.Array.items) |JSONOp|
-												{
-																const Data = JSONOp.Object.get("Data") orelse unreachable;
-																const Type	= JSONOp.Object.get("Type") orelse unreachable;
-																switch(@intToEnum(common.op_type, Type.Integer))
+            for (Ops.Array.items) |JSONOp|
+            {
+                const Data = JSONOp.Object.get("Data") orelse unreachable;
+                const Type = JSONOp.Object.get("Type") orelse unreachable;
+                switch(@intToEnum(common.op_type, Type.Integer))
                 {
-																				common.op_type.PyModule =>
-																				{
-								                const ScriptName = Data.Object.get("ScriptName") orelse unreachable;
-																								const NoExtScriptName = std.fs.path.stem(ScriptName.String);
+                    common.op_type.PyModule =>
+                    {
+                        const ScriptName = Data.Object.get("ScriptName") orelse unreachable;
+			const NoExtScriptName = std.fs.path.stem(ScriptName.String);
 
                         // Read module name and compute index of MainPyModule within PyModuleNames.
 
@@ -245,37 +245,32 @@ pub fn CreateArtifact(Ally: std.mem.Allocator, ConfPathZ: []const u8,
                         }
                         std.debug.assert(MainModuleIndex >= 0);
 
-																								try ArtiF.writer().writeInt(usize, @enumToInt(common.op_type.PyModule),
-																												std.builtin.Endian.Little);
+                        try ArtiF.writer().writeInt(@typeInfo(common.op_type).Enum.tag_type,
+                        @enumToInt(common.op_type.PyModule), std.builtin.Endian.Little);
 
-	                       const NewOp = common.arti_op{
-	                           .PyModule = .{
-																												    .Index = @intCast(usize, MainModuleIndex),
-																												},
+                        const NewOp = common.op_pymodule{
+                            .Index = @intCast(usize, MainModuleIndex),
                         };
 
-																								try ArtiF.writer().writeAll(std.mem.asBytes(&NewOp));
-
-																				},
-																				common.op_type.Capture =>
-																				{
-																								const Pattern = Data.Object.get("Pattern") orelse unreachable;
+                        try ArtiF.writer().writeStruct(NewOp);
+                    },
+                    common.op_type.Capture =>
+                    {
+                        const Pattern = Data.Object.get("PatternID") orelse unreachable;
                         const Offset = Data.Object.get("Offset") orelse unreachable;
 
-																								try ArtiF.writer().writeInt(usize, @enumToInt(common.op_type.Capture),
-																												std.builtin.Endian.Little);
+                        try ArtiF.writer().writeInt(usize, @enumToInt(common.op_type.Capture),
+                            std.builtin.Endian.Little);
 
-	                       const NewOp = common.arti_op{
-	                           .Capture = .{
-																																.PatternID = @intCast(usize, Pattern.Integer),
-																																.Offset = @intCast(usize, Offset.Integer),
-																												},
-																								};
+                        const NewOp = common.op_capture{
+                            .PatternID = @intCast(usize, Pattern.Integer),
+                            .Offset = @intCast(usize, Offset.Integer),
+                        };
 
-																								try ArtiF.writer().writeAll(std.mem.asBytes(&NewOp));
-																				},
-																}
-												}
+                        try ArtiF.writer().writeStruct(NewOp);
+                    },
+                }
+            }
         }
     }
 }

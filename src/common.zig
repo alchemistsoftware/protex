@@ -1,32 +1,56 @@
+pub const op_pymodule = packed struct
+{
+    Index: usize,
+};
+
+pub const op_capture = packed struct
+{
+    PatternID: usize,
+    Offset: usize,
+};
+
+pub const op_type = enum(usize)
+{
+    PyModule,
+    Capture,
+};
+
 //
 // Artifact header structs
 //
 
-/// Artifact category header
-pub const arti_cat_header = packed struct
+pub const arti_op_q_header = packed struct
 {
-    nCategoryNameBytes: usize,
-    nCategoryConditionBytes: usize,
-    MainPyModuleIndex: usize,
+    nOps: usize,
 };
 
-/// Artifact definition header
+/// Operation header
+
+pub const arti_op_header = packed struct
+{
+    Type: op_type,
+};
+
+/// Extractor definition header
+
 pub const arti_def_header = packed struct
 {
     nExtractorNameBytes: usize,
     DatabaseSize: usize,
-    nCategories: usize,
+    nOperationQueues: usize,
     nPatterns: usize,
 };
 
-/// Artifact python module header
+/// Python module header
+
 pub const arti_py_module_header = packed struct
 {
     nPyNameBytes: usize,
     nPySourceBytes: usize,
 };
 
-/// First header in a packager artifact
+/// First item in a packager artifact
+
 pub const arti_header = packed struct
 {
     nExtractorDefs: usize,
@@ -57,23 +81,29 @@ pub const arti_header = packed struct
 //     *---Extraction context header----*
 //     | N extractor name bytes (usize) |
 //     | N database bytes (usize)       |
-//     | N categories (usize)           |
+//     | N operation queues (usize)     |
 //     | N patterns (usize)             |
 //     |----Extraction context data-----|
 //     | Extractor name (nBytes)        |
 //     | HS database (nbytes)           |
 //     *--------------------------------*
 //
-//         *--------Category header---------*
-//         | N category name bytes (usize)  |
-//         | N condition bytes (usize)      |
-//         |---------Category data----------|
-//         | Category name (nbytes)         |
-//         | Conditions (nbytes)            |
+//         *------Operation Q header--------*
+//         | N Operations (usize)           |
 //         *--------------------------------*
 //
-//         *--------Category header---------*
-//         |              ...               |
+//             *--------Operation header--------*
+//             | Operation type (usize)         |
+//             |---------Operation data---------|
+//             | Operation data (arti_op)       |
+//             *--------------------------------*
+//
+//             *--------Operation header--------*
+//             |              ...               |
+//             *--------------------------------*
+//
+//         *------Operation Q header--------*
+//         |             ...                |
 //         *--------------------------------*
 //
 //     *---Extraction context header----*
