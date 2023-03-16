@@ -3,6 +3,11 @@ export type extr_def =
     Name: string,
     OperationQueues: op[][],
     Patterns: string[],
+
+    // GUI specific data.
+
+    OpBoxesSave: op_box_save[],
+    SVGLinePosesSave: svg_line_pos_save[],
 };
 
 export type op_capture =
@@ -50,13 +55,28 @@ export type protex_state =
     Extractors: extr_def[],
 };
 
+export type svg_line_pos_save =
+{
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+};
+
+export type op_box_save =
+{
+    OffsetLeft: number,
+    OffsetTop: number,
+
+    LeftNubLineIndices: number[],
+    RightNubLineIndices: number[],
+};
+
 export type html_nub =
 {
     LineIndices: number[],
 } & HTMLElement;
 
-export type html_op_box = //TODO(cjb): Impl me!
+export type html_op_box =
 {
-    LeftNub: html_nub,
-    RightNub: html_nub,
 } & HTMLElement;

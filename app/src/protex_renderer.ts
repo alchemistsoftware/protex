@@ -1,4 +1,5 @@
-import {extr_def, protex_window, protex_state, html_nub, op} from "./protex_renderer_include";
+import {extr_def, protex_window, protex_state, html_nub, op,
+html_op_box, op_box_save, svg_line_pos_save} from "./protex_renderer_include";
 
 enum op_type //TODO(cjb): GET ME EXPORTING IN renderer_include.ts !!!!
 {
@@ -27,7 +28,7 @@ function Assert(ExprTruthiness: boolean, DEBUGMsg: string): void
     }
 }
 
-function OperationQueueFromLeaf(OpBoxes: HTMLCollectionOf<Element>, LeafOpBox: Element): op[]
+function OperationQueueFromLeaf(OpBoxes: html_op_box[], LeafOpBox: html_op_box): op[]
 {
     let NewOperationQueue = []
     let CurrOpBox = LeafOpBox;
@@ -68,7 +69,7 @@ function OperationQueueFromLeaf(OpBoxes: HTMLCollectionOf<Element>, LeafOpBox: E
 
         // Move to parent op box
 
-        const [_, CurrRightNub] = NubsFromContainer(CurrOpBox);
+        const [_, CurrRightNub] = NubsFromOpBox(CurrOpBox);
         Assert(((CurrRightNub.LineIndices.length === 1) ||
                 (CurrRightNub.LineIndices.length === 0)), "Expected length of 1 or 0");
 
@@ -79,36 +80,41 @@ function OperationQueueFromLeaf(OpBoxes: HTMLCollectionOf<Element>, LeafOpBox: E
         else
         {
             CurrOpBox = OpBoxFromRightLineIndex(OpBoxes,
-                CurrRightNub.LineIndices[0]) as Element;
+                CurrRightNub.LineIndices[0]);
         }
     }
 
     return NewOperationQueue;
 }
 
-function OpBoxFromRightLineIndex(
-    OpBoxes: HTMLCollectionOf<Element>, RightLineIndex: number): Element | undefined
+function OpBoxFromRightLineIndex(OpBoxes: html_op_box[],
+    RightLineIndex: number): html_op_box
 {
+    let Result: html_op_box | null = null;
+
     for (const Box of OpBoxes)
     {
-        const [LeftNub, _] = NubsFromContainer(Box);
+        const [LeftNub, _] = NubsFromOpBox(Box);
         for (const LeftLineIndex of LeftNub.LineIndices)
         {
             if (RightLineIndex === LeftLineIndex)
             {
-                return Box;
+                Result = Box;
+                break;
             }
         }
     }
-    Assert(false, `No LeftLineIndex matching ${RightLineIndex}`);
+    Assert(Result !== null, `No LeftLineIndex matching ${RightLineIndex}`);
+
+    return Result as html_op_box;
 }
 
-function NubsFromContainer(Container: Element): [html_nub, html_nub]
+function NubsFromOpBox(Box: html_op_box): [html_nub, html_nub]
 {
     const LeftNub = TryGetElementByClassName(
-        Container, "draggable-container-connecter-left") as html_nub;
-    const RightNub = TryGetElementByClassName(
-        Container, "draggable-container-connecter-right") as html_nub;
+       Box, "draggable-container-connecter-left") as html_nub;
+   const RightNub = TryGetElementByClassName(
+       Box, "draggable-container-connecter-right") as html_nub;
 
     return [LeftNub, RightNub];
 }
@@ -119,10 +125,18 @@ function LineIndexFromNub(Nub: Element): number
     return Result;
 }
 
+function OpBoxesFromDOM(): html_op_box[]
+{
+    const VisualScriptingContainer = TryGetElementByID("visual-scripting-container");
+    const OpBoxes = Array.from(VisualScriptingContainer.
+        getElementsByClassName("draggable-container")) as html_op_box[];
+
+    return OpBoxes;
+}
+
 function RemoveSVGLineByIndex(TargetLineIndex: number): void
 {
-    const CategoryContainer = TryGetElementByID("category-container");
-    const OpBoxes = CategoryContainer.getElementsByClassName("draggable-container");
+    const OpBoxes = OpBoxesFromDOM();
     if ((TargetLineIndex >= 0) &&
         (TargetLineIndex < OpBoxes.length))
     {
@@ -142,7 +156,7 @@ function RemoveSVGLineByIndex(TargetLineIndex: number): void
 
         for (const Box of OpBoxes)
         {
-            const [LeftNub, RightNub] = NubsFromContainer(Box);
+            const [LeftNub, RightNub] = NubsFromOpBox(Box);
             RemoveLineIndexFromNub(LeftNub);
             RemoveLineIndexFromNub(RightNub);
         }
@@ -153,7 +167,7 @@ function RemoveSVGLineByIndex(TargetLineIndex: number): void
         {
             for (const Box of OpBoxes)
             {
-                const [LeftNub, RightNub] = NubsFromContainer(Box);
+                const [LeftNub, RightNub] = NubsFromOpBox(Box);
 
                 for (let [LineIndexIndex, LineIndex] of LeftNub.LineIndices.entries())
                 {
@@ -185,7 +199,7 @@ function RemoveSVGLineByIndex(TargetLineIndex: number): void
 
 function MakeDraggableLine(ConnecterNub: html_nub): void
 {
-    const CategoryContainer = TryGetElementByID("category-container");
+    const VisualScriptingContainer = TryGetElementByID("visual-scripting-container");
     const SVGCategoryMask = TryGetElementByID("svg-category-mask");
 
     let ConnecterLine: SVGLineElement;
@@ -195,8 +209,8 @@ function MakeDraggableLine(ConnecterNub: html_nub): void
     function DragMouseDown(E: MouseEvent): void
     {
         E = E || window.event;
-        const X = E.clientX - CategoryContainer.offsetLeft;
-        const Y = E.clientY - CategoryContainer.offsetTop;
+        const X = E.clientX - VisualScriptingContainer.offsetLeft;
+        const Y = E.clientY - VisualScriptingContainer.offsetTop;
 
         while (ConnecterNub.LineIndices.length > 0)
         {
@@ -221,8 +235,8 @@ function MakeDraggableLine(ConnecterNub: html_nub): void
         E = E || window.event;
         E.preventDefault();
 
-        const X = E.clientX - CategoryContainer.offsetLeft;
-        const Y = E.clientY - CategoryContainer.offsetTop;
+        const X = E.clientX - VisualScriptingContainer.offsetLeft;
+        const Y = E.clientY - VisualScriptingContainer.offsetTop;
 
         ConnecterLine.setAttribute("x2", `${X}`);
         ConnecterLine.setAttribute("y2", `${Y}`);
@@ -260,14 +274,20 @@ function MakeDraggableLine(ConnecterNub: html_nub): void
     }
 }
 
-function MakeDraggable(Elmnt: HTMLElement): void
+function SetOpBoxXY(OpBox: html_op_box, x: number, y: number): void
 {
-    const CategoryContainer = TryGetElementByID("category-container");
+    OpBox.style.left = String(x) + "px";
+    OpBox.style.top = String(y) + "px";
+}
+
+function MakeDraggableOpBox(OpBox: html_op_box): void
+{
+    const VisualScriptingContainer = TryGetElementByID("visual-scripting-container");
     const SVGCategoryMask = TryGetElementByID("svg-category-mask");
-    const ContainerHeader = TryGetElementByClassName(Elmnt, "draggable-container-header", 0);
+    const BoxHeader = TryGetElementByClassName(OpBox, "draggable-container-header", 0);
 
     let Pos1 = 0, Pos2 = 0, Pos3 = 0, Pos4 = 0;
-    ContainerHeader.onmousedown = DragMouseDown;
+    BoxHeader.onmousedown = DragMouseDown;
 
     function DragMouseDown(E: MouseEvent)
     {
@@ -295,24 +315,23 @@ function MakeDraggable(Elmnt: HTMLElement): void
 
         // Set the element's new position:
 
-        Elmnt.style.left = (Elmnt.offsetLeft - Pos1) + "px";
-        Elmnt.style.top = (Elmnt.offsetTop - Pos2) + "px";
+        SetOpBoxXY(OpBox, OpBox.offsetLeft - Pos1, OpBox.offsetTop - Pos2);
 
         // Also remember to draw lines at new position
 
-        const [LeftNub, RightNub] = NubsFromContainer(Elmnt);
+        const [LeftNub, RightNub] = NubsFromOpBox(OpBox);
 
         for (const LineIndex of LeftNub.LineIndices)
         {
             const Line = SVGCategoryMask.children[LineIndex] as HTMLElement;
-            Line.setAttribute("x2", `${Elmnt.offsetLeft - Pos1 + LeftNub.offsetLeft}`);
-            Line.setAttribute("y2", `${Elmnt.offsetTop - Pos2 + LeftNub.offsetTop}`);
+            Line.setAttribute("x2", `${OpBox.offsetLeft - Pos1 + LeftNub.offsetLeft}`);
+            Line.setAttribute("y2", `${OpBox.offsetTop - Pos2 + LeftNub.offsetTop}`);
         }
         for (const LineIndex of RightNub.LineIndices)
         {
             const Line = SVGCategoryMask.children[LineIndex] as HTMLElement;
-            Line.setAttribute("x1", `${Elmnt.offsetLeft - Pos1 + RightNub.offsetLeft}`);
-            Line.setAttribute("y1", `${Elmnt.offsetTop - Pos2 + RightNub.offsetTop}`);
+            Line.setAttribute("x1", `${OpBox.offsetLeft - Pos1 + RightNub.offsetLeft}`);
+            Line.setAttribute("y1", `${OpBox.offsetTop - Pos2 + RightNub.offsetTop}`);
         }
     }
 
@@ -325,37 +344,38 @@ function MakeDraggable(Elmnt: HTMLElement): void
     }
 }
 
-function MakeOpBox(ScriptNames: string[], Op: op): void
+// TODO(cjb): FINISH giving rel props to ob_box_save and finish imports...
+
+function MakeOpBox(ScriptNames: string[], OpBoxSave: op_box_save): void
 {
-    const _ = Op; //TODO(cjb): Acutally build from existing op struct.
+    const VisualScriptingContainer = TryGetElementByID("visual-scripting-container");
+    const HTMLOpBox = document.createElement("div") as html_op_box;
+    HTMLOpBox.className = "draggable-container";
+    VisualScriptingContainer.appendChild(HTMLOpBox);
 
-    const CategoryContainer = TryGetElementByID("category-container");
+    SetOpBoxXY(HTMLOpBox, OpBoxSave.OffsetLeft, OpBoxSave.OffsetTop);
 
-    const DraggableContainer = document.createElement("div");
-    DraggableContainer.className = "draggable-container";
-    CategoryContainer.appendChild(DraggableContainer);
-
-    const DraggableContainerHeader = document.createElement("div");
-    DraggableContainerHeader.className = "draggable-container-header";
-    DraggableContainer.appendChild(DraggableContainerHeader);
+    const OpBoxHeader = document.createElement("div");
+    OpBoxHeader.className = "draggable-container-header";
+    HTMLOpBox.appendChild(OpBoxHeader);
 
     const RightNub = document.createElement("span") as html_nub;
     RightNub.className = "draggable-container-connecter-right";
-    RightNub.LineIndices = [];
-    DraggableContainer.appendChild(RightNub);
+    RightNub.LineIndices = OpBoxSave.RightNubLineIndices.splice(0);
+    HTMLOpBox.appendChild(RightNub);
     MakeDraggableLine(RightNub);
 
     const LeftNub = document.createElement("span") as html_nub;
     LeftNub.className = "draggable-container-connecter-left";
-    LeftNub.LineIndices = [];
-    DraggableContainer.appendChild(LeftNub);
+    LeftNub.LineIndices = OpBoxSave.LeftNubLineIndices.splice(0);
+    HTMLOpBox.appendChild(LeftNub);
     MakeDraggableLine(LeftNub);
 
-    MakeDraggable(DraggableContainer);
+    MakeDraggableOpBox(HTMLOpBox);
 
     // Remove a box by right clicking on it
 
-    DraggableContainer.onauxclick = (E: MouseEvent) =>
+    HTMLOpBox.onauxclick = (E: MouseEvent) =>
     {
         E.stopImmediatePropagation();
         E.preventDefault();
@@ -370,17 +390,17 @@ function MakeOpBox(ScriptNames: string[], Op: op): void
             RemoveSVGLineByIndex(RightNub.LineIndices[0]);
         }
 
-        DraggableContainer.remove();
+        HTMLOpBox.remove();
     };
 
 
-    const DraggableContainerContents = document.createElement("div");
-    DraggableContainerContents.className = "draggable-container-contents";
-    DraggableContainer.appendChild(DraggableContainerContents);
+    const OpBoxContents = document.createElement("div");
+    OpBoxContents.className = "draggable-container-contents";
+    HTMLOpBox.appendChild(OpBoxContents);
 
     const SelectTypeSelect = document.createElement("select");
     SelectTypeSelect.className = "select-type-select";
-    DraggableContainerContents.appendChild(SelectTypeSelect);
+    OpBoxContents.appendChild(SelectTypeSelect);
 
     const PatternSelect = document.createElement("select");
     PatternSelect.className = "pattern-select";
@@ -398,7 +418,7 @@ function MakeOpBox(ScriptNames: string[], Op: op): void
         }
     }
     PatternSelect.style.display = "none";
-    DraggableContainerContents.appendChild(PatternSelect);
+    OpBoxContents.appendChild(PatternSelect);
 
     const OffsetSlider = document.createElement("input");
     OffsetSlider.className = "capture-offset-slider";
@@ -417,7 +437,7 @@ function MakeOpBox(ScriptNames: string[], Op: op): void
         }
     };
 
-    for (const Elem of [DraggableContainer, DraggableContainerHeader, DraggableContainerContents])
+    for (const Elem of [HTMLOpBox, OpBoxHeader, OpBoxContents])
     {
         Elem.onmouseover = () =>
         {
@@ -438,7 +458,7 @@ function MakeOpBox(ScriptNames: string[], Op: op): void
         };
     }
 
-    DraggableContainerContents.appendChild(OffsetSlider);
+    OpBoxContents.appendChild(OffsetSlider);
 
     const ScriptSelect = document.createElement("select");
     ScriptSelect.className = "script-select";
@@ -454,7 +474,7 @@ function MakeOpBox(ScriptNames: string[], Op: op): void
         }
     }
     ScriptSelect.style.display = "none";
-    DraggableContainerContents.appendChild(ScriptSelect);
+    OpBoxContents.appendChild(ScriptSelect);
 
     const SelectorTypeOptions = ["Capture", "Script"];
     for (const Entry of SelectorTypeOptions.entries())
@@ -638,6 +658,8 @@ function AddExtr(Extrs: extr_def[], ExtrName: string, Patterns: string[], Ops: o
         Name: ExtrName,
         OperationQueues: Ops.slice(0),
         Patterns: Patterns.slice(0),
+        OpBoxesSave: [],
+        SVGLinePosesSave: [],
     });
 }
 
@@ -713,31 +735,44 @@ function ImportJSONConfig(S: protex_state, E: Event): void
 
         const JSONConfig = JSON.parse(Text);
         let ExtrDefIndex = 0;
-        for (const ExtrDef of JSONConfig.ExtractorDefinitions)
+        for (const [ExtrDefIndex, ExtrDef] of JSONConfig.Extractors.entries())
         {
-            if (ExtrDefIndex === 0)
+            S.Extractors.push({
+                Name: ExtrDef.Name,
+                OperationQueues: ExtrDef.OperationQueues.slice(0),
+                Patterns: ExtrDef.Patterns.slice(0),
+
+                OpBoxesSave: ExtrDef.OpBoxesSave.slice(0),
+                SVGLinePosesSave: ExtrDef.SVGLinePosesSave.slice(0),
+            });
+
+            if (ExtrDefIndex === 0) // Than represent this in GUI
             {
-                AddExtr(S.Extractors, ExtrDef.Name, ExtrDef.Patterns, ExtrDef.Categories);
-                for (const Cat of ExtrDef.Categories)
-                {
-                    //AddCat(S.ScriptNames, S.Extractors[ExtrDefIndex], Cat.Name, Cat.Conditions);
-                }
+                AddExtrSelectOption(ExtrDef.Name);
 
                 for (const P of ExtrDef.Patterns)
                 {
                     AddPattern(P);
                 }
-            }
-            else
-            {
-                S.Extractors.push({
-                    Name: ExtrDef.Name,
-                    OperationQueues: ExtrDef.OperationQueues.slice(0),
-                    Patterns: ExtrDef.Patterns.slice(0)
-                });
-            }
 
-            ExtrDefIndex += 1;
+                for (const OpBoxSave of ExtrDef.OpBoxesSave)
+                {
+                    MakeOpBox(S.ScriptNames, OpBoxSave);
+                }
+
+                const SVGCategoryMask = TryGetElementByID("svg-category-mask");
+                for (const SVGLinePosSave of ExtrDef.SVGLinePosesSave)
+                {
+                    ConnecterLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    ConnecterLine.setAttribute("x1", `${SVGLinePosSave.x1}`);
+                    ConnecterLine.setAttribute("y1", `${SVGLinePosSave.y1}`);
+                    ConnecterLine.setAttribute("x2", `${SVGLinePosSave.x2}`);
+                    ConnecterLine.setAttribute("y2", `${SVGLinePosSave.y2}`);
+                    ConnecterLine.setAttribute("stroke-width", "2");
+                    ConnecterLine.setAttribute("stroke", "white");
+                    SVGCategoryMask.appendChild(ConnecterLine);
+                }
+            }
         }
 
         const AddExtractorOption = document.createElement("option");
@@ -763,23 +798,52 @@ function GenJSONConfig(Extractors: extr_def[]): string
                 ExtrDef.Patterns.push((Elem as HTMLInputElement).value);
             }
 
-            const CategoryContainer = TryGetElementByID("category-container");
-
-            const OpBoxes = CategoryContainer.getElementsByClassName("draggable-container");
-
             let OperationQueues: op[][] = [];
-            for (const OpBox of OpBoxes)
+            let OpBoxesSave: op_box_save[] = [];
+
+            const OpBoxes = OpBoxesFromDOM();
+            for (const [OpBoxIndex, OpBox] of OpBoxes.entries())
             {
-                const [LeftNub, _] = NubsFromContainer(OpBox);
+                const [LeftNub, RightNub] = NubsFromOpBox(OpBox);
+
                 if (LeftNub.LineIndices.length === 0)
                 {
                     OperationQueues.push(OperationQueueFromLeaf(OpBoxes, OpBox));
                 }
-            }
 
-            ExtrDef.OperationQueues = OperationQueues.slice(0);
-								}
+                const BoxSave = Declare<op_box_save>();
+
+                Assert(OpBox.style.left.length > 2, "Style left was not assigned");
+                BoxSave.OffsetLeft = Number(OpBox.style.left.slice(0, -2));  // Rid "px" suffix
+
+                Assert(OpBox.style.top.length > 2, "Style top was not assigned");
+                BoxSave.OffsetTop = Number(OpBox.style.top.slice(0, -2));  // Rid "px" suffix
+
+                BoxSave.LeftNubLineIndices = LeftNub.LineIndices.splice(0);
+                BoxSave.RightNubLineIndices = RightNub.LineIndices.splice(0);
+
+                OpBoxesSave.push(BoxSave);
+            }
+            ExtrDef.OperationQueues = OperationQueues.splice(0);
+            ExtrDef.OpBoxesSave = OpBoxesSave.splice(0);
+
+            const SVGCategoryMask = TryGetElementByID("svg-category-mask");
+            let SVGLinePosesSave: svg_line_pos_save[] = [];
+            for (const LineElem of SVGCategoryMask.children)
+            {
+                const SVGLinePos = Declare<svg_line_pos_save>();
+                SVGLinePos.x1 = Number(LineElem.getAttribute("x1"));
+                SVGLinePos.y1 = Number(LineElem.getAttribute("y1"));
+                SVGLinePos.x2 = Number(LineElem.getAttribute("x2"));
+                SVGLinePos.y2 = Number(LineElem.getAttribute("y2"));
+
+                SVGLinePosesSave.push(SVGLinePos);
+            }
+            ExtrDef.SVGLinePosesSave = SVGLinePosesSave.splice(0);
+        }
     });
+
+    debugger;
 
     return JSON.stringify({Extractors: Extractors, ConfName: ConfName});
 }
@@ -1043,9 +1107,9 @@ ProtexWindow.ProtexAPI.GetScriptNames()
                     // NOTE(cjb): Because we are allways removing op dom elements if you cancel
                     // adding an extractor restore it's dom elements.
 
-                    for (const Ops of S.Extractors[ExtractorSelect.selectedIndex].OperationQueues)
+                    for (const OpBoxSave of S.Extractors[ExtractorSelect.selectedIndex].OpBoxesSave)
                     {
-                        MakeOpBox(S.ScriptNames, Ops[0]); //TODO(cjb): FIXME
+                        MakeOpBox(S.ScriptNames, OpBoxSave);
                     }
                     for (const P of S.Extractors[ExtractorSelect.selectedIndex].Patterns)
                     {
@@ -1069,7 +1133,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
             {
 
                 MakeOpBox(S.ScriptNames, Ops[0]); //TODO(cjb): FIXME
-												}
+            }
             for (const P of S.Extractors[ExtractorSelect.selectedIndex].Patterns)
             {
                 AddPattern(P);
@@ -1180,11 +1244,11 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     }
     ABox.appendChild(PreText);
 
-    const CategoryContainer = document.createElement("div");
-    CategoryContainer.id = "category-container";
-    AContainer.appendChild(CategoryContainer);
+    const VisualScriptingContainer = document.createElement("div");
+    VisualScriptingContainer.id = "visual-scripting-container";
+    AContainer.appendChild(VisualScriptingContainer);
 
-    CategoryContainer.onauxclick = (E: MouseEvent) =>
+    VisualScriptingContainer.onauxclick = (E: MouseEvent) =>
     {
         E.preventDefault();
 
@@ -1214,14 +1278,14 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     const SVGCategoryMask = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     SVGCategoryMask.id = "svg-category-mask";
     SVGCategoryMask.style.position = "absolute";
-    SVGCategoryMask.setAttribute("width", `${CategoryContainer.clientWidth}`);
-    SVGCategoryMask.setAttribute("height", `${CategoryContainer.clientHeight}`);
+    SVGCategoryMask.setAttribute("width", `${VisualScriptingContainer.clientWidth}`);
+    SVGCategoryMask.setAttribute("height", `${VisualScriptingContainer.clientHeight}`);
     window.onresize = () =>
     {
-        SVGCategoryMask.setAttribute("width", `${CategoryContainer.clientWidth}`);
-        SVGCategoryMask.setAttribute("height", `${CategoryContainer.clientHeight}`);
+        SVGCategoryMask.setAttribute("width", `${VisualScriptingContainer.clientWidth}`);
+        SVGCategoryMask.setAttribute("height", `${VisualScriptingContainer.clientHeight}`);
     }
-    CategoryContainer.appendChild(SVGCategoryMask);
+    VisualScriptingContainer.appendChild(SVGCategoryMask);
 
     const AutoCompleteMenu = document.createElement("menu");
     AutoCompleteMenu.id = "auto-complete-menu";
