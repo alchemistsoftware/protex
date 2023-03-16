@@ -316,6 +316,8 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
         try HSCodeToErr(c.hs_scan(ExtractorDef.Database, Text.ptr,
                 @intCast(c_uint, Text.len), 0, Self.Scratch, HSMatchHandler, &MatchList));
 
+        const nTextMatches = MatchList.items.len;
+
         // Begin JSON array labeled with this extractor's name containing categories.
 
         try W.objectField(ExtractorDef.Name);
@@ -328,6 +330,7 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
             try W.arrayElem();
             try W.beginObject();
 
+            var LatestPyModuleMatchCount: usize = 0;
             var LatestMatch: match = undefined;
             var LatestExtractTarget = Text;
 
@@ -363,34 +366,33 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                         }
                         else
                         {
-                            const StartingIndex = MatchList.items.len;
+                            var MatchListIndex: usize = 0;
+                            while (MatchListIndex < LatestPyModuleMatchCount) : (MatchListIndex += 1)
+                            {
+                                _ = MatchList.pop();
+                            }
 
                             try HSCodeToErr(c.hs_scan(ExtractorDef.Database, LatestExtractTarget.ptr,
                                 @intCast(c_uint, LatestExtractTarget.len), 0, Self.Scratch,
                                 HSMatchHandler, &MatchList));
 
-                            var AssignedAlready = false; // NOTE(cjb): HACK see todo on handling multi
-                                                         // matches
-                            const nPyMoudleMatches = MatchList.items.len - StartingIndex;
-                            var MatchListIndex = StartingIndex;
-                            while (MatchListIndex < nPyMoudleMatches)
-                            {
-                                const Match = MatchList.pop();
-                                if ((@intCast(c_uint, Op.Capture.PatternID) == Match.ID) and
-                                    (!AssignedAlready))
-                                {
-                                    LatestMatch = Match;
-                                    LatestMatch.EO = @min(LatestMatch.EO + Op.Capture.Offset,
-                                                            LatestExtractTarget.len);
-                                    AssignedAlready = true;
-                                }
-                            }
+                            LatestPyModuleMatchCount = MatchList.items.len - nTextMatches;
                         }
                     },
                     op_type.Capture =>
                     {
-                        // FIXME(cjb): Need to work with correct set of matches....
-                        for (MatchList.items) |Match|
+                        var MatchView: []match = undefined;
+                        if (LatestExtractTarget.ptr == Text.ptr)
+                        {
+                            MatchView = MatchList.items[0 .. nTextMatches];
+                        }
+                        else
+                        {
+                           MatchView = MatchList.items
+                               [nTextMatches .. nTextMatches + LatestPyModuleMatchCount];
+                        }
+
+                        for (MatchView) |Match|
                         {
                             if (@intCast(c_uint, Op.Capture.PatternID) == Match.ID)
                             {
