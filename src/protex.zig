@@ -342,9 +342,9 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                     {
                         // Pass entire text if this is first op
 
+                        const GarbageID = 123;
                         if (OpIndex == 0)
                         {
-                            const GarbageID = 123;
                             LatestMatch = match{.SO=0, .EO=LatestExtractTarget.len, .ID=GarbageID};
                         }
 
@@ -356,28 +356,19 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
                             SempyRunBuf);
 
                         LatestExtractTarget = SempyRunBuf[0..nBytesCopied];
+                        LatestMatch = match{.SO=0, .EO=LatestExtractTarget.len, .ID=GarbageID};
 
-                        // If this is the last op index don't worry about matches.
-
-                        if (OpIndex == OpQ.len - 1)
+                        var MatchListIndex: usize = 0;
+                        while (MatchListIndex < LatestPyModuleMatchCount) : (MatchListIndex += 1)
                         {
-                            const GarbageID = 123;
-                            LatestMatch = match{.SO=0, .EO=LatestExtractTarget.len, .ID=GarbageID};
+                            _ = MatchList.pop();
                         }
-                        else
-                        {
-                            var MatchListIndex: usize = 0;
-                            while (MatchListIndex < LatestPyModuleMatchCount) : (MatchListIndex += 1)
-                            {
-                                _ = MatchList.pop();
-                            }
 
-                            try HSCodeToErr(c.hs_scan(ExtractorDef.Database, LatestExtractTarget.ptr,
-                                @intCast(c_uint, LatestExtractTarget.len), 0, Self.Scratch,
-                                HSMatchHandler, &MatchList));
+                        try HSCodeToErr(c.hs_scan(ExtractorDef.Database, LatestExtractTarget.ptr,
+                            @intCast(c_uint, LatestExtractTarget.len), 0, Self.Scratch,
+                            HSMatchHandler, &MatchList));
 
-                            LatestPyModuleMatchCount = MatchList.items.len - nTextMatches;
-                        }
+                        LatestPyModuleMatchCount = MatchList.items.len - nTextMatches;
                     },
                     op_type.Capture =>
                     {
