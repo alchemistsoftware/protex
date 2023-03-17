@@ -13,6 +13,16 @@ const array_list = std.ArrayList;
 
 const self = @This();
 
+const op_pymodule = common.op_pymodule;
+const op_capture = common.op_capture;
+const op_type = common.op_type;
+
+pub const op = union(op_type)
+{
+    PyModule: op_pymodule,
+    Capture: op_capture,
+};
+
 const match = struct
 {
     SO: c_ulonglong,
@@ -20,18 +30,10 @@ const match = struct
     ID: c_uint,
 };
 
-const cat_box = struct
-{
-    Name: []u8,
-    Conditions: []u8,
-    MainPyModuleIndex: usize,
-};
-
 const extractor_def = struct
 {
     Name: []u8,
-
-    CatBoxes: []cat_box,
+    OpQs: [][]op,
     Database: ?*c.hs_database_t,
     nDatabaseBytes: usize,
 };
@@ -146,6 +148,7 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
 // Read python module data and pass it to sempy for loading.
 //
     // Sempy must be initialized before any sempy fns are called.
+
     try sempy.Init();
 
     // Future sempy run calls will require module name so we will store them here.
@@ -157,22 +160,26 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
         const PyModHeader = try R.readStruct(common.arti_py_module_header);
 
         // NameZ buf & code buf
+
         var NameZ = try Self.Ally.alloc(u8, PyModHeader.nPyNameBytes + 1);
         defer Self.Ally.free(NameZ);
         var SourceZ = try Self.Ally.alloc(u8, PyModHeader.nPySourceBytes + 1);
         defer Self.Ally.free(SourceZ);
 
         // Read name & code
+
         debug.assert(try R.readAll(NameZ[0 .. PyModHeader.nPyNameBytes]) ==
             PyModHeader.nPyNameBytes);
         debug.assert(try R.readAll(SourceZ[0 .. PyModHeader.nPySourceBytes]) ==
             PyModHeader.nPySourceBytes);
 
         // Null terminate both name & code buffers.
+
         NameZ[NameZ.len - 1] = 0;
         SourceZ[SourceZ.len - 1] = 0;
 
         // Attempt to load module & append to module list.
+
         const CallbackFn = try sempy.LoadModuleFromSource(NameZ, SourceZ);
         try Self.PyCallbacks.append(CallbackFn);
     }
@@ -181,6 +188,7 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
 // Read extractor definitions
 //
     // TODO(cjb): set allocator used for scratch
+
     Self.Scratch = null; // HS is weird about scratch being null
     Self.ExtrDefs = try Self.Ally.alloc(extractor_def, ArtiHeader.nExtractorDefs);
 
@@ -195,6 +203,7 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
 
         // Read serialized database NOTE(cjb): Can I just pass this to deserailze at instead of
         // allocing a buffer then passing?
+
         var SerializedBytes = try Self.Ally.alloc(u8, DefHeader.DatabaseSize);
         defer Self.Ally.free(SerializedBytes);
         debug.assert(try R.readAll(SerializedBytes) == DefHeader.DatabaseSize);
@@ -216,32 +225,43 @@ pub fn Init(Ally: allocator, ArtifactPath: []const u8) !self
         try HSCodeToErr(c.hs_alloc_scratch(ExtrDef.Database, &Self.Scratch));
 
 //
-// Read category data
+// Read operation data
 //
 
-        ExtrDef.CatBoxes = try Self.Ally.alloc(cat_box, DefHeader.nCategories);
-        var CatIndex: usize = 0;
-        while (CatIndex < DefHeader.nCategories) : (CatIndex += 1)
+        ExtrDef.OpQs = try Self.Ally.alloc([]op, DefHeader.nOperationQueues);
+        var OpQIndex: usize = 0;
+        while (OpQIndex < DefHeader.nOperationQueues) : (OpQIndex += 1)
         {
-            const CatHeader = try R.readStruct(common.arti_cat_header);
+            const OpQHeader = try R.readStruct(common.arti_op_q_header);
+            ExtrDef.OpQs[OpQIndex] = try Self.Ally.alloc(op, OpQHeader.nOps);
+            var OpIndex: usize = 0;
+            while (OpIndex < OpQHeader.nOps) : (OpIndex += 1)
+            {
+                const OpType = @intToEnum(op_type,
+                    try R.readInt(@typeInfo(op_type).Enum.tag_type, std.builtin.Endian.Little));
 
-            var Name = try Ally.alloc(u8, CatHeader.nCategoryNameBytes);
-            debug.assert(try R.readAll(Name) == CatHeader.nCategoryNameBytes);
+                var Op: op = undefined;
+                switch(OpType)
+                {
+                    op_type.PyModule =>
+                    {
+                        Op = op{.PyModule = try R.readStruct(op_pymodule),};
+                    },
+                    op_type.Capture =>
+                    {
+                        Op = op{.Capture = try R.readStruct(op_capture),};
+                    },
+                }
 
-            var Conditions = try Ally.alloc(u8, CatHeader.nCategoryConditionBytes);
-            debug.assert(try R.readAll(Conditions) == CatHeader.nCategoryConditionBytes);
-
-           ExtrDef.CatBoxes[CatIndex] = cat_box{
-               .Name = Name,
-               .Conditions = Conditions,
-               .MainPyModuleIndex = CatHeader.MainPyModuleIndex,
-           };
+                ExtrDef.OpQs[OpQIndex][OpIndex] = Op;
+            }
         }
 
         Self.ExtrDefs[ExtractorDefIndex] = ExtrDef;
     }
 
     // Initialize extractor scratch buffer
+
     Self.FBackBuf = try Ally.alloc(u8, 1024*1024);
 
     return Self;
@@ -254,6 +274,7 @@ fn HSMatchHandler(ID: c_uint, From: c_ulonglong, To: c_ulonglong, _: c_uint,
         @alignCast(@alignOf(?*array_list(match)), Ctx)) orelse unreachable;
 
     // TODO(cjb): Decide if this should be handled or not. (just make this fixed size)
+
     MatchList.append(.{.SO=From, .EO=To, .ID=ID}) catch unreachable;
     return 0;
 }
@@ -274,16 +295,14 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
 {
     var FBAlly = fixed_buffer_allocator.init(Self.FBackBuf);
 
-    // Initialize match list which will store HYPERSCAN matches.
+    // Store HYPERSCAN matches somewhere.
 
     var MatchList = array_list(match).init(FBAlly.allocator());
 
-    // Allocate fixed buffers for stream & sempy output.
+    // Buffers for stream & sempy output.
 
     var SempyRunBuf = try FBAlly.allocator().alloc(u8, 1024*1);
     var ReturnBuf = try FBAlly.allocator().alloc(u8, 1024*10);
-
-    // Initialize an output stream for our JSON writer.
 
     var JSONStream = std.io.fixedBufferStream(ReturnBuf);
     var W = std.json.writeStream(JSONStream.writer(), 5);
@@ -297,6 +316,8 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
         try HSCodeToErr(c.hs_scan(ExtractorDef.Database, Text.ptr,
                 @intCast(c_uint, Text.len), 0, Self.Scratch, HSMatchHandler, &MatchList));
 
+        const nTextMatches = MatchList.items.len;
+
         // Begin JSON array labeled with this extractor's name containing categories.
 
         try W.objectField(ExtractorDef.Name);
@@ -304,53 +325,89 @@ pub fn Extract(Self: *self, Text: []const u8) ![]u8
 
         //TODO(cjb): Decide how to handle multi matches within same category
 
-        for (ExtractorDef.CatBoxes) |Cat|
+        for (ExtractorDef.OpQs) |OpQ|
         {
-            for (MatchList.items) |Match|
+            try W.arrayElem();
+            try W.beginObject();
+
+            var LatestPyModuleMatchCount: usize = 0;
+            var LatestMatch: match = undefined;
+            var LatestExtractTarget = Text;
+
+            for (OpQ) |Op, OpIndex|
             {
-                var CondItr = std.mem.tokenize(u8, Cat.Conditions, " ");
-                var CurrTok = CondItr.next() orelse "";
-                if (CurrTok.len > 1 and CurrTok[0] == '#')
+                switch(Op)
                 {
-                    // If we can find this match in matchlist than continue
-
-                    const TargetPatternID =
-                        try std.fmt.parseUnsigned(c_ulonglong, CurrTok[1 .. ], 10);
-                    if (TargetPatternID != Match.ID)
+                    op_type.PyModule =>
                     {
-                        continue;
-                    }
+                        // Pass entire text if this is first op
+
+                        const GarbageID = 123;
+                        if (OpIndex == 0)
+                        {
+                            LatestMatch = match{.SO=0, .EO=LatestExtractTarget.len, .ID=GarbageID};
+                        }
+
+                        const nBytesCopied = try sempy.Run(
+                            Self.PyCallbacks.items[@intCast(usize, Op.PyModule.Index)],
+                            LatestExtractTarget,
+                            LatestMatch.SO,
+                            LatestMatch.EO,
+                            SempyRunBuf);
+
+                        LatestExtractTarget = SempyRunBuf[0..nBytesCopied];
+                        LatestMatch = match{.SO=0, .EO=LatestExtractTarget.len, .ID=GarbageID};
+
+                        var MatchListIndex: usize = 0;
+                        while (MatchListIndex < LatestPyModuleMatchCount) : (MatchListIndex += 1)
+                        {
+                            _ = MatchList.pop();
+                        }
+
+                        try HSCodeToErr(c.hs_scan(ExtractorDef.Database, LatestExtractTarget.ptr,
+                            @intCast(c_uint, LatestExtractTarget.len), 0, Self.Scratch,
+                            HSMatchHandler, &MatchList));
+
+                        LatestPyModuleMatchCount = MatchList.items.len - nTextMatches;
+                    },
+                    op_type.Capture =>
+                    {
+                        var MatchView: []match = undefined;
+                        if (LatestExtractTarget.ptr == Text.ptr)
+                        {
+                            MatchView = MatchList.items[0 .. nTextMatches];
+                        }
+                        else
+                        {
+                           MatchView = MatchList.items
+                               [nTextMatches .. nTextMatches + LatestPyModuleMatchCount];
+                        }
+
+                        for (MatchView) |Match|
+                        {
+                            if (@intCast(c_uint, Op.Capture.PatternID) == Match.ID)
+                            {
+                                LatestMatch = Match;
+                                LatestMatch.EO = @min(LatestMatch.EO + Op.Capture.Offset,
+                                                        LatestExtractTarget.len);
+                                break;
+                            }
+                        }
+                    },
                 }
-                else if (!std.mem.eql(u8, CurrTok, "*"))
-                {
-                    return error.BadConditonStatment;
-                }
-                else
-                {
-                    return error.BadConditonStatment;
-                }
-
-                var nBytesCopied = try sempy.Run(
-                    Self.PyCallbacks.items[@intCast(usize, Cat.MainPyModuleIndex)],
-                    Text,
-                    Match.SO,
-                    Match.EO,
-                    SempyRunBuf);
-
-                try W.arrayElem();
-                try W.beginObject();
-                try W.objectField(Cat.Name);
-                try W.emitString(SempyRunBuf[0..nBytesCopied]);
-
-                // Spit out match indicies ( mostly for web client's benifit )
-
-                try W.objectField("SO");
-                try W.emitNumber(Match.SO);
-                try W.objectField("EO");
-                try W.emitNumber(Match.EO);
-
-                try W.endObject(); // End this category's JSON blurb.
             }
+
+            try W.objectField("Out");
+            try W.emitString(LatestExtractTarget[LatestMatch.SO..LatestMatch.EO]);
+
+            // Spit out match indicies ( For config client's benifit )
+
+            try W.objectField("SO");
+            try W.emitNumber(LatestMatch.SO);
+            try W.objectField("EO");
+            try W.emitNumber(LatestMatch.EO);
+
+            try W.endObject(); // End this operation queue's JSON blurb.
         }
         try W.endArray(); // End extractor's list of JSON blurbs.
     }
@@ -376,12 +433,11 @@ pub fn Deinit(Self: *self) void
     for (Self.ExtrDefs) |Def|
     {
         Self.Ally.free(Def.Name);
-        for (Def.CatBoxes) |Cat|
+        for (Def.OpQs) |OpQ|
         {
-            Self.Ally.free(Cat.Name);
-            Self.Ally.free(Cat.Conditions);
+								    Self.Ally.free(OpQ);
         }
-        Self.Ally.free(Def.CatBoxes);
+        Self.Ally.free(Def.OpQs);
         Self.Ally.free(@ptrCast([*]u8, Def.Database.?)[0 .. Def.nDatabaseBytes]);
     }
     Self.Ally.free(Self.ExtrDefs);

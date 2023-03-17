@@ -47,14 +47,27 @@
     display: flex;
     flex-direction: row;
     width: 100%;
-    background-color: #1f1f23;
+    background-color: #FFFFFF;
+    color: #000000;
 }
 .toolbar-item{
     padding: 0px 8px 0px 8px;
-    font-family: "FiraCode-Light";
+    font-size: small;
+    font-family: "FiraCode-Regular";
 }
 .toolbar-item:hover{
-    background-color: #3e3e40;
+    background-color: #EEEEEE;
+}
+
+.user-prompt{
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #111111;
+    color: #FFFFFF;
+    border: ;
+    font-size: larger;
 }
 
 #ab-box-container{
@@ -134,13 +147,72 @@ input,button{
 }
 .bottomright {
     font-family: "FiraCode-Light";
+    font-size: small;
     position: absolute;
+    max-width: 50%;
     bottom: 1%;
     right: 1%;
+    z-index: -1;
 }
 .bottomleft {
     font-family: "FiraCode-Light";
+    font-size: small;
     position: absolute;
+    max-width: 50%;
     bottom: 1%;
     left: 1%;
+    z-index: -1;
+}
+
+.draggable-container{
+    width: 100px;
+    height: 100px;
+    position: absolute;
+    background-color: #111111;
+}
+
+div.draggable-container-contents{
+    overflow: hidden;
+}
+
+.capture-offset-slider{
+    width: 100%;
+}
+
+.draggable-container-connecter-left{
+    top: 50%;
+    left: -3%;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background-color: #FFFFFF;
+    position: absolute;
+    display: inline-block;
+}
+
+.draggable-container-connecter-right{
+    top: 50%;
+    right: -3%;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background-color: #FFFFFF;
+    position: absolute;
+    display: inline-block;
+}
+
+.draggable-container-header{
+    font-size: x-small;
+    color: #000000;
+    background-color: #FFFFFF;
+    height: 10%;
+    width: 100%;
+}
+
+#visual-scripting-container{
+    overflow: hidden;
+    position: relative;
+    width: 100%;
+    height: 50vh;
+    max-height: 50vh;
 }

@@ -1,0 +1,5 @@
+- Export button
+- Draggable visual scripting area
+- Colored hilighting.. i.e captures within captures
+- Enforce visual scripting connection structure.
+- JUCE JUCE JUCE
