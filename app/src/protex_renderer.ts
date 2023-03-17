@@ -1,5 +1,6 @@
 import {extr_def, protex_window, protex_state, html_nub, op,
-html_op_box, op_box_save, svg_line_pos_save} from "./protex_renderer_include";
+html_op_box, op_box_save, svg_line_pos_save, op_capture,
+op_pymodule} from "./protex_renderer_include";
 
 enum op_type //TODO(cjb): GET ME EXPORTING IN renderer_include.ts !!!!
 {
@@ -28,6 +29,51 @@ function Assert(ExprTruthiness: boolean, DEBUGMsg: string): void
     }
 }
 
+function OpFromBox(OpBox: html_op_box): op
+{
+    let Result = Declare<op>();
+
+    const SelectTypeSelect = TryGetElementByClassName(
+        OpBox, "select-type-select") as HTMLSelectElement;
+    switch(Number(SelectTypeSelect.value))
+    {
+        case op_type.capture:
+        {
+            const PatternSelect = TryGetElementByClassName(
+                OpBox, "pattern-select") as HTMLSelectElement;
+            //Assert(PatternSelect.value !== "", "PatternSelect was empty.");
+
+            // NOTE(cjb): See validate extr onchange todo
+
+            let PatternID = 0;
+            if (PatternSelect.value !== "")
+            {
+                PatternID = Number(PatternSelect.options[PatternSelect.selectedIndex].value)
+            }
+
+            const OffsetSlider = TryGetElementByClassName(OpBox,
+                "capture-offset-slider") as HTMLSelectElement;
+
+            Result = {Type: op_type.capture, Data: {PatternID: PatternID,
+                Offset: Number(OffsetSlider.value)}};
+        } break;
+        case op_type.pymodule:
+        {
+            const ScriptSelect = TryGetElementByClassName(
+                OpBox, "script-select") as HTMLSelectElement;
+            Assert(ScriptSelect.value !== "", "ScriptSelect was empty.");
+
+            Result = {Type: op_type.pymodule,  Data: {ScriptName: ScriptSelect.value}};
+        } break;
+        default:
+        {
+            Assert(false, "Fell through selector type options switch.");
+        } break;
+    }
+
+    return Result;
+}
+
 function OperationQueueFromLeaf(OpBoxes: html_op_box[], LeafOpBox: html_op_box): op[]
 {
     let NewOperationQueue = []
@@ -35,37 +81,7 @@ function OperationQueueFromLeaf(OpBoxes: html_op_box[], LeafOpBox: html_op_box):
     let FoundRoot = false;
     while (!FoundRoot)
     {
-        const SelectTypeSelect = TryGetElementByClassName(
-            CurrOpBox, "select-type-select") as HTMLSelectElement;
-
-        let NewOp = Declare<op>();
-        switch(Number(SelectTypeSelect.value))
-        {
-            case 0: // TODO(cjb) FIXME capture
-            {
-                const PatternSelect = TryGetElementByClassName(
-                    CurrOpBox, "pattern-select") as HTMLSelectElement;
-                Assert(PatternSelect.value !== "", "PatternSelect was empty.");
-
-                const OffsetSlider = TryGetElementByClassName(CurrOpBox,
-                    "capture-offset-slider") as HTMLSelectElement;
-                NewOp = {Type: op_type.capture, Data: {PatternID:
-                    Number(PatternSelect.options[PatternSelect.selectedIndex].value),
-                    Offset: Number(OffsetSlider.value)}};
-            } break;
-            case 1: // TODO(cjb) // TODO(cjb): FIXME pymoudle
-            {
-                const ScriptSelect = TryGetElementByClassName(
-                    CurrOpBox, "script-select") as HTMLSelectElement;
-                Assert(ScriptSelect.value !== "", "ScriptSelect was empty.");
-                NewOp = {Type: op_type.pymodule,  Data: {ScriptName: ScriptSelect.value}};
-            } break;
-            default:
-            {
-                Assert(false, "Fell through selector type options switch.");
-            } break;
-        }
-        NewOperationQueue.push(NewOp);
+        NewOperationQueue.push(OpFromBox(CurrOpBox));
 
         // Move to parent op box
 
@@ -344,9 +360,20 @@ function MakeDraggableOpBox(OpBox: html_op_box): void
     }
 }
 
-// TODO(cjb): FINISH giving rel props to ob_box_save and finish imports...
+function EmptyOpBox(ScriptNames: string[]): void
+{
+    const EmptyOpBoxSave = Declare<op_box_save>();
+    EmptyOpBoxSave.OffsetLeft = 0;
+    EmptyOpBoxSave.OffsetTop = 0;
+    EmptyOpBoxSave.LeftNubLineIndices = [],
+    EmptyOpBoxSave.RightNubLineIndices = [],
+    EmptyOpBoxSave.Op = Declare<op>();
+    EmptyOpBoxSave.Op.Type = -1;
+    OpBoxFromSave(ScriptNames, [], EmptyOpBoxSave);
+}
 
-function MakeOpBox(ScriptNames: string[], OpBoxSave: op_box_save): void
+function OpBoxFromSave(ScriptNames: string[], SavedPatterns: string[],
+    OpBoxSave: op_box_save): void
 {
     const VisualScriptingContainer = TryGetElementByID("visual-scripting-container");
     const HTMLOpBox = document.createElement("div") as html_op_box;
@@ -361,13 +388,13 @@ function MakeOpBox(ScriptNames: string[], OpBoxSave: op_box_save): void
 
     const RightNub = document.createElement("span") as html_nub;
     RightNub.className = "draggable-container-connecter-right";
-    RightNub.LineIndices = OpBoxSave.RightNubLineIndices.splice(0);
+    RightNub.LineIndices = OpBoxSave.RightNubLineIndices.slice(0);
     HTMLOpBox.appendChild(RightNub);
     MakeDraggableLine(RightNub);
 
     const LeftNub = document.createElement("span") as html_nub;
     LeftNub.className = "draggable-container-connecter-left";
-    LeftNub.LineIndices = OpBoxSave.LeftNubLineIndices.splice(0);
+    LeftNub.LineIndices = OpBoxSave.LeftNubLineIndices.slice(0);
     HTMLOpBox.appendChild(LeftNub);
     MakeDraggableLine(LeftNub);
 
@@ -393,21 +420,66 @@ function MakeOpBox(ScriptNames: string[], OpBoxSave: op_box_save): void
         HTMLOpBox.remove();
     };
 
-
     const OpBoxContents = document.createElement("div");
     OpBoxContents.className = "draggable-container-contents";
     HTMLOpBox.appendChild(OpBoxContents);
+
+    const ScriptSelect = document.createElement("select");
+    const PatternSelect = document.createElement("select");
+    const OffsetSlider = document.createElement("input");
+    ScriptSelect.style.display = "none";
+    PatternSelect.style.display = "none";
+    OffsetSlider.style.display = "none";
+
+    let InitialSelectedPatternIndex = -1;
+    let InitialOffset = 0;
+    let InitialSelectedPyModuleIndex = -1;
+    switch(OpBoxSave.Op.Type)
+    {
+        case op_type.pymodule:
+        {
+            const OpPyModule = OpBoxSave.Op.Data as op_pymodule;
+            for (const [ScriptNameIndex, ScriptName] of ScriptNames.entries())
+            {
+                if (ScriptName === OpPyModule.ScriptName)
+                {
+                    InitialSelectedPyModuleIndex = ScriptNameIndex;
+                }
+            }
+
+            PatternSelect.style.display = "none";
+            OffsetSlider.style.display = "none";
+            ScriptSelect.style.display = "block";
+        } break;
+        case op_type.capture:
+        {
+            const OpCapture = OpBoxSave.Op.Data as op_capture;
+            InitialSelectedPatternIndex = OpCapture.PatternID;
+            InitialOffset = OpCapture.Offset;
+
+            PatternSelect.style.display = "block";
+            OffsetSlider.style.display = "block";
+            ScriptSelect.style.display = "none";
+        } break;
+        default: break;
+    }
 
     const SelectTypeSelect = document.createElement("select");
     SelectTypeSelect.className = "select-type-select";
     OpBoxContents.appendChild(SelectTypeSelect);
 
-    const PatternSelect = document.createElement("select");
     PatternSelect.className = "pattern-select";
+    for (const [PatternIndex, Pattern] of SavedPatterns.entries())
+    {
+        const NewOption = document.createElement("option");
+        NewOption.text = Pattern;
+        NewOption.value = String(PatternIndex);
+        PatternSelect.add(NewOption);
+    }
     PatternSelect.onfocus = () =>
     {
-        PatternSelect.innerHTML = "";
         const PatternsContainer = TryGetElementByID("patterns-container");
+        PatternSelect.innerHTML = "";
         let PatternIndex = 0;
         for (const Elem of PatternsContainer.getElementsByClassName("pattern-input"))
         {
@@ -417,17 +489,15 @@ function MakeOpBox(ScriptNames: string[], OpBoxSave: op_box_save): void
             PatternSelect.add(NewOption);
         }
     }
-    PatternSelect.style.display = "none";
     OpBoxContents.appendChild(PatternSelect);
+    PatternSelect.selectedIndex = InitialSelectedPatternIndex;
 
-    const OffsetSlider = document.createElement("input");
     OffsetSlider.className = "capture-offset-slider";
     OffsetSlider.setAttribute("type", "range");
     OffsetSlider.setAttribute("min", "0");
     OffsetSlider.setAttribute("max", "500");
-    OffsetSlider.setAttribute("value", "0");
+    OffsetSlider.setAttribute("value", `${InitialOffset}`);
     OffsetSlider.setAttribute("step", "10");
-    OffsetSlider.style.display = "none";
     OffsetSlider.oninput = () =>
     {
         if (PatternSelect.selectedIndex !== -1)
@@ -460,8 +530,15 @@ function MakeOpBox(ScriptNames: string[], OpBoxSave: op_box_save): void
 
     OpBoxContents.appendChild(OffsetSlider);
 
-    const ScriptSelect = document.createElement("select");
     ScriptSelect.className = "script-select";
+    ScriptSelect.innerHTML = "";
+    for (const ScriptName of ScriptNames)
+    {
+        const NewOption = document.createElement("option");
+        NewOption.text = ScriptName;
+        NewOption.value = ScriptName;
+        ScriptSelect.add(NewOption);
+    }
     ScriptSelect.onfocus = () =>
     {
         ScriptSelect.innerHTML = "";
@@ -473,21 +550,21 @@ function MakeOpBox(ScriptNames: string[], OpBoxSave: op_box_save): void
             ScriptSelect.add(NewOption);
         }
     }
-    ScriptSelect.style.display = "none";
+    ScriptSelect.selectedIndex = InitialSelectedPyModuleIndex;
+
+    const ScriptOption = document.createElement("option");
+    ScriptOption.text = "Script";
+    ScriptOption.value = op_type.pymodule.toString();
+    SelectTypeSelect.add(ScriptOption);
+
+    const CaptureOption = document.createElement("option");
+    CaptureOption.text = "Capture";
+    CaptureOption.value = op_type.capture.toString();
+    SelectTypeSelect.add(CaptureOption);
+
     OpBoxContents.appendChild(ScriptSelect);
 
-    const SelectorTypeOptions = ["Capture", "Script"];
-    for (const Entry of SelectorTypeOptions.entries())
-    {
-        const OptionIndex = Entry[0];
-        const OptionText = Entry[1];
-
-        const NewOption = document.createElement("option");
-        NewOption.text = OptionText;
-        NewOption.value = OptionIndex.toString();
-        SelectTypeSelect.add(NewOption);
-    }
-    SelectTypeSelect.selectedIndex = -1;
+    SelectTypeSelect.selectedIndex = OpBoxSave.Op.Type;
 
     SelectTypeSelect.onchange = () =>
     {
@@ -495,17 +572,16 @@ function MakeOpBox(ScriptNames: string[], OpBoxSave: op_box_save): void
         if ((SelectedIndex >= 0) &&
             (SelectedIndex < SelectTypeSelect.options.length))
         {
-            const SelectorTypeOptionsIndex = Number(SelectTypeSelect.value);
-            switch(SelectorTypeOptions[SelectorTypeOptionsIndex])
+            switch(Number(SelectTypeSelect.value))
             {
-                case "Capture":
+                case op_type.capture:
                 {
                     PatternSelect.style.display = "block";
                     OffsetSlider.style.display = "block";
 
                     ScriptSelect.style.display = "none";
                 } break;
-                case "Script":
+                case op_type.pymodule:
                 {
                     ScriptSelect.style.display = "block";
 
@@ -519,20 +595,7 @@ function MakeOpBox(ScriptNames: string[], OpBoxSave: op_box_save): void
             }
         }
     }
-
 }
-
-//function AddEmptyOpBox(ScriptNames: string[], ExtrDef: extr_def): void
-//{
-//				let Op = Declare<op>();
-//    AddCat(ScriptNames, ExtrDef, Op);
-//}
-
-//function AddOpBox(ScriptNames: string[], ExtrDef: extr_def, Op: op): void
-//{
-//    ExtrDef.Operations.push(Cat);
-//    MakeOpBox(ScriptNames, Name, Conditions);
-//}
 
 function LastSelectedPatternInput(): HTMLInputElement | null
 {
@@ -619,8 +682,6 @@ function AddExtrSelectOption(ExtrName: string): void
         }
     }
 
-    // Add the created extractor
-
     const ExtractorOption = document.createElement("option");
     ExtractorOption.text = ExtrName;
     ExtractorOption.value = ExtrName;
@@ -644,23 +705,6 @@ function AddExtrSelectOption(ExtrName: string): void
         }
         OptionIndex += 1;
     }
-}
-
-function AddEmptyExtr(Extrs: extr_def[], ExtrName: string): void
-{
-    AddExtr(Extrs, ExtrName, [], []);
-}
-
-function AddExtr(Extrs: extr_def[], ExtrName: string, Patterns: string[], Ops: op[][]): void
-{
-    AddExtrSelectOption(ExtrName);
-    Extrs.push({
-        Name: ExtrName,
-        OperationQueues: Ops.slice(0),
-        Patterns: Patterns.slice(0),
-        OpBoxesSave: [],
-        SVGLinePosesSave: [],
-    });
 }
 
 function PopulatePyModuleSelectOptions(ScriptNames: string[], Selector: HTMLSelectElement,
@@ -732,11 +776,11 @@ function ImportJSONConfig(S: protex_state, E: Event): void
         S.Extractors = [];
         const ExtractorSelect = TryGetElementByID("extractor-select") as HTMLSelectElement;
         ExtractorSelect.innerHTML = "";
-
         const JSONConfig = JSON.parse(Text);
-        let ExtrDefIndex = 0;
         for (const [ExtrDefIndex, ExtrDef] of JSONConfig.Extractors.entries())
         {
+            AddExtrSelectOption(ExtrDef.Name);
+
             S.Extractors.push({
                 Name: ExtrDef.Name,
                 OperationQueues: ExtrDef.OperationQueues.slice(0),
@@ -746,9 +790,9 @@ function ImportJSONConfig(S: protex_state, E: Event): void
                 SVGLinePosesSave: ExtrDef.SVGLinePosesSave.slice(0),
             });
 
-            if (ExtrDefIndex === 0) // Than represent this in GUI
+            if (ExtrDefIndex === 0) // DOM time
             {
-                AddExtrSelectOption(ExtrDef.Name);
+                ExtractorSelect.selectedIndex = 0;
 
                 for (const P of ExtrDef.Patterns)
                 {
@@ -757,13 +801,14 @@ function ImportJSONConfig(S: protex_state, E: Event): void
 
                 for (const OpBoxSave of ExtrDef.OpBoxesSave)
                 {
-                    MakeOpBox(S.ScriptNames, OpBoxSave);
+                    OpBoxFromSave(S.ScriptNames, ExtrDef.Patterns, OpBoxSave);
                 }
 
                 const SVGCategoryMask = TryGetElementByID("svg-category-mask");
                 for (const SVGLinePosSave of ExtrDef.SVGLinePosesSave)
                 {
-                    ConnecterLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    const ConnecterLine =
+                        document.createElementNS("http://www.w3.org/2000/svg", "line");
                     ConnecterLine.setAttribute("x1", `${SVGLinePosSave.x1}`);
                     ConnecterLine.setAttribute("y1", `${SVGLinePosSave.y1}`);
                     ConnecterLine.setAttribute("x2", `${SVGLinePosSave.x2}`);
@@ -774,13 +819,62 @@ function ImportJSONConfig(S: protex_state, E: Event): void
                 }
             }
         }
-
-        const AddExtractorOption = document.createElement("option");
-        AddExtractorOption.text = "New Extractor";
-        AddExtractorOption.value = "New Extractor";
-        ExtractorSelect.add(AddExtractorOption);
-        ExtractorSelect.selectedIndex = -1;
     });
+}
+
+function SaveExtrFromDOM(ExtrDef: extr_def)
+{
+    ExtrDef.Patterns = [];
+    const PatternsContainer = TryGetElementByID("patterns-container");
+    for (const Elem of PatternsContainer.getElementsByClassName("pattern-input"))
+    {
+        ExtrDef.Patterns.push((Elem as HTMLInputElement).value);
+    }
+
+    let OperationQueues: op[][] = [];
+    let OpBoxesSave: op_box_save[] = [];
+
+    const OpBoxes = OpBoxesFromDOM();
+    for (const [OpBoxIndex, OpBox] of OpBoxes.entries())
+    {
+        const [LeftNub, RightNub] = NubsFromOpBox(OpBox);
+
+        if (LeftNub.LineIndices.length === 0)
+        {
+            OperationQueues.push(OperationQueueFromLeaf(OpBoxes, OpBox));
+        }
+
+        const BoxSave = Declare<op_box_save>();
+
+        BoxSave.Op = OpFromBox(OpBox); //TODO(cjb): STOP DUPING DATA!
+
+        Assert(OpBox.style.left.length > 2, "Style left was not assigned");
+        BoxSave.OffsetLeft = Number(OpBox.style.left.slice(0, -2));  // Rid "px" suffix
+
+        Assert(OpBox.style.top.length > 2, "Style top was not assigned");
+        BoxSave.OffsetTop = Number(OpBox.style.top.slice(0, -2));  // Rid "px" suffix
+
+       BoxSave.LeftNubLineIndices = LeftNub.LineIndices.slice(0);
+       BoxSave.RightNubLineIndices = RightNub.LineIndices.slice(0);
+
+        OpBoxesSave.push(BoxSave);
+    }
+    ExtrDef.OperationQueues = OperationQueues.slice(0);
+    ExtrDef.OpBoxesSave = OpBoxesSave.slice(0);
+
+    const SVGCategoryMask = TryGetElementByID("svg-category-mask");
+    let SVGLinePosesSave: svg_line_pos_save[] = [];
+    for (const LineElem of SVGCategoryMask.children)
+    {
+        const SVGLinePos = Declare<svg_line_pos_save>();
+        SVGLinePos.x1 = Number(LineElem.getAttribute("x1"));
+        SVGLinePos.y1 = Number(LineElem.getAttribute("y1"));
+        SVGLinePos.x2 = Number(LineElem.getAttribute("x2"));
+        SVGLinePos.y2 = Number(LineElem.getAttribute("y2"));
+
+        SVGLinePosesSave.push(SVGLinePos);
+    }
+    ExtrDef.SVGLinePosesSave = SVGLinePosesSave.slice(0);
 }
 
 function GenJSONConfig(Extractors: extr_def[]): string
@@ -789,61 +883,11 @@ function GenJSONConfig(Extractors: extr_def[]): string
     let ExtrDefs: extr_def[] = [];
     Extractors.map((ExtrDef) =>
     {
-        if (ExtrDef.Name === CurrentExtractor) // Use DOM elements
+        if (ExtrDef.Name === CurrentExtractor)
         {
-            ExtrDef.Patterns = [];
-            const PatternsContainer = TryGetElementByID("patterns-container");
-            for (const Elem of PatternsContainer.getElementsByClassName("pattern-input"))
-            {
-                ExtrDef.Patterns.push((Elem as HTMLInputElement).value);
-            }
-
-            let OperationQueues: op[][] = [];
-            let OpBoxesSave: op_box_save[] = [];
-
-            const OpBoxes = OpBoxesFromDOM();
-            for (const [OpBoxIndex, OpBox] of OpBoxes.entries())
-            {
-                const [LeftNub, RightNub] = NubsFromOpBox(OpBox);
-
-                if (LeftNub.LineIndices.length === 0)
-                {
-                    OperationQueues.push(OperationQueueFromLeaf(OpBoxes, OpBox));
-                }
-
-                const BoxSave = Declare<op_box_save>();
-
-                Assert(OpBox.style.left.length > 2, "Style left was not assigned");
-                BoxSave.OffsetLeft = Number(OpBox.style.left.slice(0, -2));  // Rid "px" suffix
-
-                Assert(OpBox.style.top.length > 2, "Style top was not assigned");
-                BoxSave.OffsetTop = Number(OpBox.style.top.slice(0, -2));  // Rid "px" suffix
-
-                BoxSave.LeftNubLineIndices = LeftNub.LineIndices.splice(0);
-                BoxSave.RightNubLineIndices = RightNub.LineIndices.splice(0);
-
-                OpBoxesSave.push(BoxSave);
-            }
-            ExtrDef.OperationQueues = OperationQueues.splice(0);
-            ExtrDef.OpBoxesSave = OpBoxesSave.splice(0);
-
-            const SVGCategoryMask = TryGetElementByID("svg-category-mask");
-            let SVGLinePosesSave: svg_line_pos_save[] = [];
-            for (const LineElem of SVGCategoryMask.children)
-            {
-                const SVGLinePos = Declare<svg_line_pos_save>();
-                SVGLinePos.x1 = Number(LineElem.getAttribute("x1"));
-                SVGLinePos.y1 = Number(LineElem.getAttribute("y1"));
-                SVGLinePos.x2 = Number(LineElem.getAttribute("x2"));
-                SVGLinePos.y2 = Number(LineElem.getAttribute("y2"));
-
-                SVGLinePosesSave.push(SVGLinePos);
-            }
-            ExtrDef.SVGLinePosesSave = SVGLinePosesSave.splice(0);
+            SaveExtrFromDOM(ExtrDef);
         }
     });
-
-    debugger;
 
     return JSON.stringify({Extractors: Extractors, ConfName: ConfName});
 }
@@ -993,9 +1037,9 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         let NewScriptName = ActiveScriptSelect.value;
         if (NewScriptName === "New Script")
         {
-            GetUserInput().then((Result) => {
+            GetUserInput().then((Result) =>
+            {
                 NewScriptName = Result;
-
                 if (NewScriptName === "")
                 {
                     // Make selected option nothing if it's just new script option.
@@ -1042,101 +1086,85 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     const ExtractorSelect = document.createElement("select");
     ExtractorSelect.id = "extractor-select";
     let PrevSelectedExtractorIndex = -1;
-    ExtractorSelect.onchange = async () =>
+    ExtractorSelect.onchange = async () => // TODO(cjb): Validate extr being saved.....
     {
         if ((PrevSelectedExtractorIndex !== -1) &&
             (PrevSelectedExtractorIndex !== ExtractorSelect.length - 1))
         {
-            const ExtrToSave  = S.Extractors[PrevSelectedExtractorIndex];
-            ExtrToSave.OperationQueues = [];
-            ExtrToSave.Patterns = []
-
-            const PatternsContainer = TryGetElementByID("patterns-container");
-            let Patterns: string[] = [];
-            for (const Elem of PatternsContainer.getElementsByClassName("pattern-input"))
-            {
-                Patterns.push((Elem as HTMLInputElement).value);
-            }
-            ExtrToSave.Patterns = Patterns.slice(0);
-
-            const CatItems = document.getElementsByClassName("cat-fields-item");
-            let CatItemIndex = 0;
-            for (const CatItem of CatItems)
-            {
-                const CatNames = document.getElementsByClassName("cat-name-input");
-                if (CatItemIndex >= CatNames.length)
-                {
-                    break;
-                }
-
-                const Conditionses = document.getElementsByClassName("conditions-input");
-                if (CatItemIndex >= Conditionses.length)
-                {
-                    break;
-                }
-
-                //ExtrToSave.Categories.push({
-                //    Name: (CatNames[CatItemIndex] as HTMLInputElement).value,
-                //    Conditions: (Conditionses[CatItemIndex] as HTMLInputElement).value
-                //});
-
-                CatItemIndex += 1
-            }
+            const ExtrToSave = S.Extractors[PrevSelectedExtractorIndex];
+            SaveExtrFromDOM(ExtrToSave);
         }
 
         // Remove old DOM elements
 
-        const CategoryFieldItems = document.getElementsByClassName("cat-fields-item");
-        for (const CatItem of CategoryFieldItems)
+        const OpBoxes = OpBoxesFromDOM();
+        for (const OpBox of OpBoxes)
         {
-            CatItem.remove();
+            OpBox.remove();
         }
+
+        const SVGCategoryMask = TryGetElementByID("svg-category-mask");
+        for (const SVGLine of SVGCategoryMask.children)
+        {
+            SVGLine.remove();
+        }
+
         for (const PatternEntry of PatternsContainer.getElementsByClassName("pattern-entry"))
         {
             PatternEntry.remove();
         }
 
+        let AddedNewExtractor = false;
         if (ExtractorSelect.value === "New Extractor")
         {
-            await GetUserInput().then((Result) => {
+            await GetUserInput().then((Result) =>
+            {
                 const NewExtractorName = Result;
                 if (NewExtractorName === "")
                 {
                     ExtractorSelect.selectedIndex = PrevSelectedExtractorIndex;
-
-                    // NOTE(cjb): Because we are allways removing op dom elements if you cancel
-                    // adding an extractor restore it's dom elements.
-
-                    for (const OpBoxSave of S.Extractors[ExtractorSelect.selectedIndex].OpBoxesSave)
-                    {
-                        MakeOpBox(S.ScriptNames, OpBoxSave);
-                    }
-                    for (const P of S.Extractors[ExtractorSelect.selectedIndex].Patterns)
-                    {
-                        AddPattern(P);
-                    }
-                    return;
                 }
-
-                const PatternsContainer = TryGetElementByID("patterns-container");
-                let Patterns: string[] = [];
-                for (const Elem of PatternsContainer.getElementsByClassName("pattern-input"))
+                else
                 {
-                    Patterns.push((Elem as HTMLInputElement).value);
+                    AddExtrSelectOption(NewExtractorName);
+                    S.Extractors.push({
+                        Name: NewExtractorName,
+                        OperationQueues: [],
+                        Patterns: [],
+                        OpBoxesSave: [],
+                        SVGLinePosesSave: [],
+                    });
+
+                    AddedNewExtractor = true;
                 }
-                AddExtr(S.Extractors, NewExtractorName, Patterns, []);
             });
         }
-        else // Otherwise switch extractors
-        {
-            for (const Ops of S.Extractors[ExtractorSelect.selectedIndex].OperationQueues)
-            {
 
-                MakeOpBox(S.ScriptNames, Ops[0]); //TODO(cjb): FIXME
+        if (!AddedNewExtractor)
+        {
+            const Extr = S.Extractors[ExtractorSelect.selectedIndex];
+            for (const OpBoxSave of Extr.OpBoxesSave)
+            {
+                OpBoxFromSave(S.ScriptNames, Extr.Patterns, OpBoxSave);
             }
-            for (const P of S.Extractors[ExtractorSelect.selectedIndex].Patterns)
+            for (const P of Extr.Patterns)
             {
                 AddPattern(P);
+            }
+
+            const SVGCategoryMask = TryGetElementByID("svg-category-mask");
+            for (const SVGLinePosSave of S.Extractors[ExtractorSelect.selectedIndex]
+                 .SVGLinePosesSave)
+            {
+                const ConnecterLine =
+                    document.createElementNS("http://www.w3.org/2000/svg", "line");
+                ConnecterLine.setAttribute("x1", `${SVGLinePosSave.x1}`);
+                ConnecterLine.setAttribute("y1", `${SVGLinePosSave.y1}`);
+                ConnecterLine.setAttribute("x2", `${SVGLinePosSave.x2}`);
+                ConnecterLine.setAttribute("y2", `${SVGLinePosSave.y2}`);
+                ConnecterLine.setAttribute("stroke-width", "2");
+                ConnecterLine.setAttribute("stroke", "white");
+                SVGCategoryMask.appendChild(ConnecterLine);
             }
         }
 
@@ -1257,9 +1285,7 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         {
             if (S.Extractors.length > 0) // Have at least 1 extractor?
             {
-                //AddEmptyCat(S.ScriptNames, S.Extractors[ExtractorSelect.selectedIndex].OperationQueues);
-																const BannanaOp = Declare<op>(); //TODO(cjb): FIXME.
-												    MakeOpBox(S.ScriptNames, BannanaOp);
+                EmptyOpBox(S.ScriptNames);
             }
             else // TODO(cjb): Actually save categories and patterns to anon extractor def.
             {
@@ -1269,9 +1295,8 @@ ProtexWindow.ProtexAPI.GetScriptNames()
                 //    OperationQueues: []
                 //};
                 //AddEmptyCat(S.ScriptNames, FakeExtr);
-																const BannanaOp = Declare<op>(); //TODO(cjb): FIXME.
-												    MakeOpBox(S.ScriptNames, BannanaOp);
-												}
+                EmptyOpBox(S.ScriptNames);
+            }
         }
     }
 

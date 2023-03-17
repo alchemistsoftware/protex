@@ -23,7 +23,6 @@ export type op_pymodule =
 
 export type op_data = op_pymodule | op_capture;
 
-
 enum op_type
 {
     pymodule = 0,
@@ -70,6 +69,8 @@ export type op_box_save =
 
     LeftNubLineIndices: number[],
     RightNubLineIndices: number[],
+
+    Op: op,
 };
 
 export type html_nub =
