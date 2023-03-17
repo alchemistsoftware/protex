@@ -2,9 +2,13 @@
 
 This project adheres to [semver](https://semver.org/)
 
-## [0.5.0-alpha] - unreleased
+## [0.5.0-alpha] - 03-17-23
 ### Added
 - Visual scripting system
+- Operation queues
+
+### Removed
+- The category paradigm in favor of operation queues.
 
 ## [0.4.1-alpha] - 02-16-23
 ### Added
