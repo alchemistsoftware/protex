@@ -1,16 +1,13 @@
-pub const op_pymodule = packed struct
-{
+pub const op_pymodule = packed struct {
     Index: usize,
 };
 
-pub const op_capture = packed struct
-{
+pub const op_capture = packed struct {
     PatternID: usize,
     Offset: usize,
 };
 
-pub const op_type = enum(usize)
-{
+pub const op_type = enum(usize) {
     PyModule,
     Capture,
 };
@@ -19,40 +16,35 @@ pub const op_type = enum(usize)
 // Artifact header structs
 //
 
-pub const arti_op_q_header = packed struct
-{
+pub const arti_op_q_header = packed struct {
     nOps: usize,
 };
 
-/// Operation header
 
-pub const arti_op_header = packed struct
-{
+/// Operation header
+pub const arti_op_header = packed struct {
     Type: op_type,
 };
 
-/// Extractor definition header
 
-pub const arti_def_header = packed struct
-{
+/// Extractor definition header
+pub const arti_def_header = packed struct {
     nExtractorNameBytes: usize,
     DatabaseSize: usize,
     nOperationQueues: usize,
     nPatterns: usize,
 };
 
-/// Python module header
 
-pub const arti_py_module_header = packed struct
-{
+/// Python module header
+pub const arti_py_module_header = packed struct {
     nPyNameBytes: usize,
     nPySourceBytes: usize,
 };
 
-/// First item in a packager artifact
 
-pub const arti_header = packed struct
-{
+/// First item in a packager artifact
+pub const arti_header = packed struct {
     nExtractorDefs: usize,
     nPyModules: usize,
 };

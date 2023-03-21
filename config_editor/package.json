@@ -1,10 +1,9 @@
 {
-  "main": "./src/protex.js",
+  "main": "./protex.js",
   "name":"protex",
   "description":"programmable text classifier and extractor",
-  "version": "0.5.0-alpha",
+  "version": "0.5.1-alpha",
   "scripts": {
-    "build": "./node_modules/.bin/tsc -b",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make"

@@ -14,8 +14,8 @@ const fs = require("fs");
 
 //TODO(cjb): Read data from config file?
 
-let DataPath = "../data";
-let BinPath = "../bin";
+let DataPath = "./data";
+let BinPath = ".";
 let ConfRelPluginsPath = "plugins";
 
 // Tell main process how it should treat uncaught exceptions.
@@ -65,6 +65,11 @@ electron.ipcMain.handle("get-script-names", async (Event: any) =>
 
     return new Promise<string[]>((Resolve) =>
     {
+        fs.readdir(`./`, (Err: Error, Files: string[]) =>
+                   {
+                       console.log(Files);
+                   });
+
         fs.readdir(`${DataPath}/${ConfRelPluginsPath}`, (Err: Error, Files: string[]) =>
         {
             if (Err) throw Err;
@@ -160,7 +165,7 @@ const CreateWindow = () =>
     });
     Win.setMinimumSize(MinWidth, MinHeight);
 
-    Win.loadFile(path.join(__dirname, "../index.html"));
+    Win.loadFile(path.join(__dirname, "./index.html"));
 }
 
 electron.app.whenReady().then(() =>

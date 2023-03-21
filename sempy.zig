@@ -5,10 +5,8 @@ const c = @cImport({
 const std = @import("std");
 const self = @This();
 
-pub fn Init() !void
-{
-    if (c.Py_IsInitialized() == 0)
-    {
+pub fn Init() !void {
+    if (c.Py_IsInitialized() == 0) {
         // Initialize without registering signal handlers
         c.Py_InitializeEx(0);
         return;
@@ -16,29 +14,24 @@ pub fn Init() !void
     return error.SempyUnknown;
 }
 
-pub fn Deinit() void
-{
-    if (c.Py_FinalizeEx() != 0)
-    {
+pub fn Deinit() void {
+    if (c.Py_FinalizeEx() != 0) {
         unreachable;
     }
     return;
 }
 
-fn PrintAndClearErr() void
-{
+fn PrintAndClearErr() void {
     c.PyErr_Print();
     c.PyErr_Clear();
 }
 
-pub const callback_fn = struct
-{
+pub const callback_fn = struct {
     FnPtr: *c.PyObject,
 };
 
 // TODO(cjb): return an optional callback for module's which don't have a main?
-pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !self.callback_fn
-{
+pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !self.callback_fn {
     // Check params are null terminated
     if ((NameZ[NameZ.len - 1] != 0) or
         (SourceZ[SourceZ.len - 1] != 0))
@@ -48,29 +41,26 @@ pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !self.callba
 
     // Get dictonary of builtins from the current execution frame.
     const Builtins = c.PyEval_GetBuiltins();
-    if (Builtins == null)
-    {
+    if (Builtins == null) {
         unreachable;
     }
     defer c.Py_DECREF(Builtins);
 
     // Lookup compile from builtins dictonary
     const Compile = c.PyDict_GetItemString(Builtins, "compile");
-    if (Compile == null)
-    {
+    if (Compile == null) {
         unreachable;
     }
     defer c.Py_DECREF(Compile);
 
     // Compiles source code into an AST object.
     const Code = c.PyObject_CallFunction(Compile, // function
-        "sss",                                    // arg format
-        @ptrCast([* :0]const u8, SourceZ.ptr),    // source code
-        @ptrCast([* :0]const u8, NameZ.ptr),      // filename
-        "exec"                                    // mode
+        "sss", // arg format
+        @ptrCast([*:0]const u8, SourceZ.ptr), // source code
+        @ptrCast([*:0]const u8, NameZ.ptr), // filename
+        "exec" // mode
     );
-    if (Code == null)
-    {
+    if (Code == null) {
         self.PrintAndClearErr();
         return error.SempyInvalid; //SempyBadSource
     }
@@ -78,9 +68,8 @@ pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !self.callba
 
     // Given a module name (possibly of the form package.module) and a code object read from
     // the built-in function compile(), load the module.
-    const Module = c.PyImport_ExecCodeModule(@ptrCast([* :0]const u8, NameZ.ptr), Code);
-    if (Module == null)
-    {
+    const Module = c.PyImport_ExecCodeModule(@ptrCast([*:0]const u8, NameZ.ptr), Code);
+    if (Module == null) {
         self.PrintAndClearErr();
         return error.SempyUnknown;
     }
@@ -88,37 +77,31 @@ pub fn LoadModuleFromSource(NameZ: []const u8, SourceZ: []const u8) !self.callba
 
     // Get function ptr to module's main
     var MainFnPtr = c.PyObject_GetAttrString(Module, "protex_main");
-    if (MainFnPtr == null)
-    {
+    if (MainFnPtr == null) {
         self.PrintAndClearErr();
         return error.SempyInvalid; // Couldn't find module's main fn
     }
 
     c.Py_INCREF(MainFnPtr);
-    return self.callback_fn{.FnPtr = MainFnPtr};
+    return self.callback_fn{ .FnPtr = MainFnPtr };
 }
 
-pub fn UnloadCallbackFn(Callback: self.callback_fn) void
-{
+pub fn UnloadCallbackFn(Callback: self.callback_fn) void {
     c.Py_DECREF(Callback.FnPtr);
 }
 
-pub fn Run(Callback: self.callback_fn, Text: []const u8, SO: c_ulonglong, EO: c_ulonglong,
-    OutBuf: []u8) !usize
-{
+pub fn Run(Callback: self.callback_fn, Text: []const u8, SO: c_ulonglong, EO: c_ulonglong, OutBuf: []u8) !usize {
     var nBytesCopied: isize = undefined;
 
     const Args = c.Py_BuildValue("(s#KK)", Text.ptr, @intCast(c.Py_ssize_t, Text.len), SO, EO);
-    if (Args == null)
-    {
+    if (Args == null) {
         self.PrintAndClearErr();
         return error.SempyConvertArgs;
     }
     defer c.Py_DECREF(Args);
 
     var Result = c.PyObject_CallObject(Callback.FnPtr, Args);
-    if (Result == null)
-    {
+    if (Result == null) {
         self.PrintAndClearErr();
         return error.SempyInvalid; // Bad return
     }
@@ -134,12 +117,11 @@ pub fn Run(Callback: self.callback_fn, Text: []const u8, SO: c_ulonglong, EO: c_
     }
 
     // Copy bytes into buf
-    if (@intCast(usize, nBytesCopied) > OutBuf.len)
-    {
+    if (@intCast(usize, nBytesCopied) > OutBuf.len) {
         return error.SempyInvalid; // Out buf isn't big enough.
-                                   // NOTE(cjb): could pass ally instead and return slice?
+        // NOTE(cjb): could pass ally instead and return slice?
     }
-    for (@ptrCast([*]const u8, UTF8EncodedStr)[0..@intCast(usize, nBytesCopied)]) |B, I|
+    for (@ptrCast([*]const u8, UTF8EncodedStr)[0..@intCast(usize, nBytesCopied)], 0..) |B, I|
         OutBuf[I] = B;
 
     return @intCast(usize, nBytesCopied);

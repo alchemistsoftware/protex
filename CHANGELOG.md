@@ -2,6 +2,12 @@
 
 This project adheres to [semver](https://semver.org/)
 
+## [0.5.1-alpha] - 03-20-23
+### Changed
+- Updated to zig 0.11.0-dev.2191
+- Updated build.zig
+- Organize project structure
+
 ## [0.5.0-alpha] - 03-17-23
 ### Added
 - Visual scripting system
