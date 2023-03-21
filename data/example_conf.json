@@ -1,1 +1,0 @@
-{"ConfName":"webs_conf.json","ExtractorDefinitions":[{"Name":"debug","Categories":[{"Name":"ASDF","Conditions":"#0 CALL n_sentance.py"}],"Patterns":["job description","asdf"]}],"PyIncludePath":"plugins"}
