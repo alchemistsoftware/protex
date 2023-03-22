@@ -2,5 +2,4 @@
 
 pushd "./bin"
 zig build
-
-cp -ruv ../data ../../build
+mkdir -p ../../build/data
