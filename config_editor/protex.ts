@@ -65,11 +65,6 @@ electron.ipcMain.handle("get-script-names", async (Event: any) =>
 
     return new Promise<string[]>((Resolve) =>
     {
-        fs.readdir(`./`, (Err: Error, Files: string[]) =>
-                   {
-                       console.log(Files);
-                   });
-
         fs.readdir(`${DataPath}/${ConfRelPluginsPath}`, (Err: Error, Files: string[]) =>
         {
             if (Err) throw Err;
@@ -152,8 +147,8 @@ const CreateWindow = () =>
     // Query primary display to find min width/height
 
     const Display = electron.screen.getPrimaryDisplay();
-    const MinWidth = Math.floor(Display.size.width / 3);
-    const MinHeight = Math.floor(Display.size.height / 3);
+    const MinWidth = 800;
+    const MinHeight = 600;
 
     const Win = new electron.BrowserWindow({
         autoHideMenuBar: true,

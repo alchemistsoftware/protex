@@ -426,10 +426,13 @@ function OpBoxFromSave(ScriptNames: string[], SavedPatterns: string[],
 
     const ScriptSelect = document.createElement("select");
     const PatternSelect = document.createElement("select");
+
+    const OffsetContainer = document.createElement("div");
+    OffsetContainer.className = "capture-offset-container";
+
     const OffsetSlider = document.createElement("input");
-    ScriptSelect.style.display = "none";
-    PatternSelect.style.display = "none";
-    OffsetSlider.style.display = "none";
+    const OffsetInput = document.createElement("input");
+
 
     let InitialSelectedPatternIndex = -1;
     let InitialOffset = 0;
@@ -448,7 +451,7 @@ function OpBoxFromSave(ScriptNames: string[], SavedPatterns: string[],
             }
 
             PatternSelect.style.display = "none";
-            OffsetSlider.style.display = "none";
+            OffsetContainer.style.display = "none";
             ScriptSelect.style.display = "block";
         } break;
         case op_type.capture:
@@ -458,10 +461,15 @@ function OpBoxFromSave(ScriptNames: string[], SavedPatterns: string[],
             InitialOffset = OpCapture.Offset;
 
             PatternSelect.style.display = "block";
-            OffsetSlider.style.display = "block";
+            OffsetContainer.style.display = "flex";
             ScriptSelect.style.display = "none";
         } break;
-        default: break;
+        default:
+        {
+            ScriptSelect.style.display = "none";
+            PatternSelect.style.display = "none";
+            OffsetContainer.style.display = "none";
+        } break;
     }
 
     const SelectTypeSelect = document.createElement("select");
@@ -495,7 +503,7 @@ function OpBoxFromSave(ScriptNames: string[], SavedPatterns: string[],
     OffsetSlider.className = "capture-offset-slider";
     OffsetSlider.setAttribute("type", "range");
     OffsetSlider.setAttribute("min", "0");
-    OffsetSlider.setAttribute("max", "500");
+    OffsetSlider.setAttribute("max", "500"); // TODO(cjb): Not 500?
     OffsetSlider.setAttribute("value", `${InitialOffset}`);
     OffsetSlider.setAttribute("step", "10");
     OffsetSlider.oninput = () =>
@@ -504,31 +512,25 @@ function OpBoxFromSave(ScriptNames: string[], SavedPatterns: string[],
         {
             HighlightCapture(PatternSelect.options[PatternSelect.selectedIndex].text,
                 Number(OffsetSlider.value));
+            OffsetInput.value = OffsetSlider.value;
         }
     };
+    OffsetContainer.appendChild(OffsetSlider);
 
-    for (const Elem of [HTMLOpBox, OpBoxHeader, OpBoxContents])
+    OffsetInput.value = String(InitialOffset);
+    OffsetInput.className = "capture-offset-input";
+    OffsetInput.oninput = () =>
     {
-        Elem.onmouseover = () =>
+        if (PatternSelect.selectedIndex !== -1)
         {
-            if (SelectTypeSelect.value === "0" && PatternSelect.selectedIndex !== -1)
-            {
-                HighlightCapture(PatternSelect.options[PatternSelect.selectedIndex].text,
-                    Number(OffsetSlider.value));
-            }
-        };
-
-        Elem.onmouseout = () =>
-        {
-            const LSPI = LastSelectedPatternInput();
-            if (LSPI != null)
-            {
-                HighlightCapture(LSPI.value);
-            }
-        };
+            HighlightCapture(PatternSelect.options[PatternSelect.selectedIndex].text,
+                Number(OffsetInput.value));
+            OffsetSlider.value = OffsetInput.value;
+        }
     }
+    OffsetContainer.appendChild(OffsetInput);
 
-    OpBoxContents.appendChild(OffsetSlider);
+    OpBoxContents.appendChild(OffsetContainer);
 
     ScriptSelect.className = "script-select";
     ScriptSelect.innerHTML = "";
@@ -577,7 +579,7 @@ function OpBoxFromSave(ScriptNames: string[], SavedPatterns: string[],
                 case op_type.capture:
                 {
                     PatternSelect.style.display = "block";
-                    OffsetSlider.style.display = "block";
+                    OffsetContainer.style.display = "flex";
 
                     ScriptSelect.style.display = "none";
                 } break;
@@ -586,7 +588,7 @@ function OpBoxFromSave(ScriptNames: string[], SavedPatterns: string[],
                     ScriptSelect.style.display = "block";
 
                     PatternSelect.style.display = "none";
-                    OffsetSlider.style.display = "none";
+                    OffsetContainer.style.display = "none";
                 } break;
                 default:
                 {
@@ -979,22 +981,17 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     ImportConfigInput.onchange = (E) => ImportJSONConfig(S, E);
     ToolbarContainer.appendChild(ImportConfigInput);
 
-    const ImportConfigTab = document.createElement("div");
-    ImportConfigTab.tabIndex = 0;
-    ImportConfigTab.className = "toolbar-item";
-    ImportConfigTab.onkeypress = (E: KeyboardEvent) =>
-    {
-        if (E.key === "Enter")
-        {
-            ImportConfigInput.click()
-        }
-    };
-    ImportConfigTab.onclick = () => ImportConfigInput.click();
-    ImportConfigTab.innerText = "Import";
-    ToolbarContainer.appendChild(ImportConfigTab);
+    const ImportConfigButton = document.createElement("button");
+    ImportConfigButton.tabIndex = 0;
+    ImportConfigButton.className = "toolbar-item";
+    ImportConfigButton.onclick = () => ImportConfigInput.click();
+    ImportConfigButton.innerText = "Import";
+    ToolbarContainer.appendChild(ImportConfigButton);
 
     const RunExtractorButton = document.createElement("button");
-    RunExtractorButton.style.display = "none";
+    RunExtractorButton.className = "toolbar-item";
+    RunExtractorButton.innerText = "Run";
+    RunExtractorButton.tabIndex = 0;
     RunExtractorButton.onclick = () =>
     {
         // Make sure to save script in TA
@@ -1017,23 +1014,22 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     }
     ToolbarContainer.appendChild(RunExtractorButton);
 
-    const RunExtractorTab = document.createElement("div");
-    RunExtractorTab.onkeypress = (E: KeyboardEvent) =>
-    {
-        if (E.key === "Enter")
-        {
-            RunExtractorButton.click()
-        }
-    };
-    RunExtractorTab.onclick = () => RunExtractorButton.click();
-    RunExtractorTab.tabIndex = 0;
-    RunExtractorTab.className = "toolbar-item";
-    RunExtractorTab.innerText = "Run";
-    ToolbarContainer.appendChild(RunExtractorTab);
-
     const ActiveScriptSelect = document.createElement("select");
+
+    // NOTE(cjb): Script select will likely get moved to a side pannel so
+    //  the whole select label option hack thing probably isn't worth writing atm.
+    // Also the same goes for the extractor select.
+
+    //const ActiveScriptSelectLabel = document.createElement("option");
+    //ActiveScriptSelectLabel.text = "Script";
+    //ActiveScriptSelectLabel.value = "Script";
+    //ActiveScriptSelectLabel.style.display = "none";
+    //ActiveScriptSelect.add(ActiveScriptSelectLabel);
+    //ActiveScriptSelect.selectedIndex = 0;
+
     let PrevSelectedScriptIndex = -1;
-    ActiveScriptSelect.onchange = () => {
+    ActiveScriptSelect.onchange = () =>
+    {
         let NewScriptName = ActiveScriptSelect.value;
         if (NewScriptName === "New Script")
         {
@@ -1104,9 +1100,9 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         }
 
         const SVGCategoryMask = TryGetElementByID("svg-category-mask");
-        for (const SVGLine of SVGCategoryMask.children)
+        while (SVGCategoryMask.children.length > 0)
         {
-            SVGLine.remove();
+            SVGCategoryMask.children[0].remove();
         }
 
         for (const PatternEntry of PatternsContainer.getElementsByClassName("pattern-entry"))
@@ -1179,6 +1175,39 @@ ProtexWindow.ProtexAPI.GetScriptNames()
     ExtractorSelect.selectedIndex = -1;
     ToolbarContainer.appendChild(ExtractorSelect);
 
+    const ThemeSelect = document.createElement("select");
+    ThemeSelect.className = "toolbar-item";
+    ThemeSelect.onchange = () =>
+    {
+        // TODO(cjb): LEFT OFF HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+        document.body.setAttribute("theme", ThemeSelect.value);
+        //ToolbarContainer.setAttribute("theme", ThemeSelect.value);
+        //ImportConfigButton.setAttribute("theme", ThemeSelect.value);
+        //RunExtractorButton.setAttribute("theme", ThemeSelect.value);
+        //ActiveScriptSelect.setAttribute("theme", ThemeSelect.value);
+
+        // NOTE(cjb): Set selector back to theme option ( so "Theme" is what is shown in toolbar )
+
+        ThemeSelect.selectedIndex = 0;
+    };
+
+    const ThemeSelectLabelOption = document.createElement("option");
+    ThemeSelectLabelOption.text = "Theme";
+    ThemeSelectLabelOption.value = "Theme";
+    ThemeSelectLabelOption.style.display = "none";
+    ThemeSelect.add(ThemeSelectLabelOption);
+
+    const ThemeNames = ["dark", "light"]
+    for (const Name of ThemeNames)
+    {
+        const ThemeSelectOption = document.createElement("option");
+        ThemeSelectOption.text = Name;
+        ThemeSelectOption.value = Name;
+        ThemeSelect.add(ThemeSelectOption);
+    }
+    ToolbarContainer.appendChild(ThemeSelect);
+
     const ABBoxContainer = document.createElement("div");
     ABBoxContainer.id = "ab-box-container";
     AContainer.appendChild(ABBoxContainer);
@@ -1229,21 +1258,26 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         PreText.style.display = "inline-block";
 
         const TextAreaText = TA.value;
-        PreText.innerHTML = TextAreaText.slice(0, TA.selectionStart) +
-                            `<span class="noice">` +
-                            TextAreaText.slice(TA.selectionStart, TA.selectionEnd) +
-                            `</span>` + TextAreaText.slice(TA.selectionEnd);
 
-        // NOTE(cjb): There should allways be a last selected pattern input, unless
-        // there are no inputs.
-        const OptLSPI = LastSelectedPatternInput();
-        if (OptLSPI == null)
-            return;
+        const TogglePatternUpdate = false;
+        if (TogglePatternUpdate)
+        {
+            PreText.innerHTML = TextAreaText.slice(0, TA.selectionStart) +
+                                `<span class="noice">` +
+                                TextAreaText.slice(TA.selectionStart, TA.selectionEnd) +
+                                `</span>` + TextAreaText.slice(TA.selectionEnd);
 
-        const LSPI = (OptLSPI as HTMLInputElement);
-        LSPI.setAttribute("SO", `${TA.selectionStart}`);
-        LSPI.setAttribute("EO", `${TA.selectionEnd}`);
-        LSPI.value = Regexify(TextAreaText.slice(TA.selectionStart, TA.selectionEnd));
+            // NOTE(cjb): There should allways be a last selected pattern input, unless
+            // there are no inputs.
+            const OptLSPI = LastSelectedPatternInput();
+            if (OptLSPI == null)
+                return;
+
+            const LSPI = (OptLSPI as HTMLInputElement);
+            LSPI.setAttribute("SO", `${TA.selectionStart}`);
+            LSPI.setAttribute("EO", `${TA.selectionEnd}`);
+            LSPI.value = Regexify(TextAreaText.slice(TA.selectionStart, TA.selectionEnd));
+        }
     });
     ABox.appendChild(TA);
 
@@ -1331,16 +1365,4 @@ ProtexWindow.ProtexAPI.GetScriptNames()
         }
     });
     AContainer.appendChild(DEBUGTextInfo);
-
-    // Ascii fox by Brian Kendig
-
-    const AsciiFox4Motivation = document.createElement("pre");
-    AsciiFox4Motivation.className = "bottomright";
-    AsciiFox4Motivation.innerText = `
-       |\\/|    ____
-    .__.. \\   /\\  /
-     \\_   /__/  \\/
-     _/  __   __/
-    /___/____/
-    v0.5.0-alpha`;
-    AContainer.appendChild(AsciiFox4Motivation); }); // GetPyModule
+});

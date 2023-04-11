@@ -2,6 +2,14 @@
 
 This project adheres to [semver](https://semver.org/)
 
+## [0.5.2-alpha] - Unreleased
+### Added
+- Theme selector
+- Offset slider input box
+
+### Removed
+- Ascii fox RIP: 02-14-23 - 03-22-23
+
 ## [0.5.1-alpha] - 03-20-23
 ### Changed
 - Updated to zig 0.11.0-dev.2191

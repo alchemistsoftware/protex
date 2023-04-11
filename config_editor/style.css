@@ -43,20 +43,42 @@
     margin: 0;
 }
 
+:root {
+  --color-bg: #000000;
+  --color-fg: #FFFFFF;
+
+  --color-blah: #EEEEEE;
+  --color-off-blah: #DDDDDD;
+}
+
+
 #toolbar-container{
     display: flex;
     flex-direction: row;
     width: 100%;
-    background-color: #FFFFFF;
-    color: #000000;
+    background-color: var(--color-blah);
+    color: var(--color-blah);
 }
+
+[theme="light"] {
+  --color-bg: #FFFFFF;
+  --color-fg: #000000;
+}
+
 .toolbar-item{
     padding: 0px 8px 0px 8px;
     font-size: small;
     font-family: "FiraCode-Regular";
+    background-color: var(--color-blah);
+    border: none;
 }
+
 .toolbar-item:hover{
-    background-color: #EEEEEE;
+    background-color: var(--color-off-blah);
+}
+
+select.toolbar-item{
+    appearance: none;
 }
 
 .user-prompt{
@@ -85,8 +107,8 @@
 
 .noice{
     font-family: "FiraCode-SemiBold";
-    background: #FFFFFF;
-    color: #000000;
+    background: var(--color-fg);
+    color: var(--color-bg);
 }
 
 #patterns-container{
@@ -113,16 +135,17 @@
     outline: none;
     border: none;
     outline: none;
-    color: #FFFFFF;
-    background-color: #000000;
+    color: var(--color-fg);
+    background-color: var(--color-bg);
     font-family: "FiraCode-Light";
 }
 .pattern-input[IsSelected=true]{
-    background-color: #111111;
+/*    background-color: #111111; */
+    background-color: var(--color-bg);
 }
 button.pattern-entry-button{
-    color: #FFFFFF;
-    background-color: #000000;
+    color: var(--color-fg);
+    background-color: var(--color-bg);
     border: none;
 }
 #text-area,#pre-text{
@@ -139,8 +162,8 @@ pre::-webkit-scrollbar,textarea::-webkit-scrollbar,div::-webkit-scrollbar {
 }
 
 body,textarea {
-    background-color: #000000;
-    color: #FFFFFF;
+    background-color: var(--color-bg);
+    color: var(--color-fg);
 }
 input,button{
     font-family: "FiraCode-Regular";
@@ -168,7 +191,7 @@ input,button{
     width: 100px;
     height: 100px;
     position: absolute;
-    background-color: #111111;
+    background-color: var(--color-blah);
 }
 
 div.draggable-container-contents{
@@ -176,7 +199,15 @@ div.draggable-container-contents{
 }
 
 .capture-offset-slider{
-    width: 100%;
+    max-width: 75%;
+}
+
+.capture-offset-input{
+    max-width: 25%;
+}
+
+div.capture-offset-container{
+    display: flex;
 }
 
 .draggable-container-connecter-left{
@@ -185,7 +216,7 @@ div.draggable-container-contents{
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background-color: #FFFFFF;
+    background-color: var(--color-off-blah);
     position: absolute;
     display: inline-block;
 }
@@ -196,15 +227,14 @@ div.draggable-container-contents{
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background-color: #FFFFFF;
+    background-color: var(--color-off-blah);
     position: absolute;
     display: inline-block;
 }
 
 .draggable-container-header{
     font-size: x-small;
-    color: #000000;
-    background-color: #FFFFFF;
+    background-color: var(--color-off-blah);
     height: 10%;
     width: 100%;
 }
