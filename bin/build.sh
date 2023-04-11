@@ -2,4 +2,4 @@
 
 pushd "./bin"
 zig build
-mkdir -p ../../build/data
+mkdir -p ../../build/data/plugins
